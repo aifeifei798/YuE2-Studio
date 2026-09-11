@@ -21,9 +21,10 @@ class Settings:
         self.output_dir: Path = Path(_getenv("YUE2_OUTPUT_DIR", str(REPO_ROOT / "outputs")))
         self.port: int = int(_getenv("YUE2_PORT", "8000"))
         self.max_queue: int = int(_getenv("YUE2_MAX_QUEUE", "10"))
+        self.submit_per_hour: int = int(_getenv("YUE2_SUBMIT_PER_HOUR", "20"))
         self.max_style_len: int = int(_getenv("YUE2_MAX_STYLE", "2000"))
         self.max_lyrics_len: int = int(_getenv("YUE2_MAX_LYRICS", "10000"))
-        self.max_title_len: int = 100
+        self.max_title_len: int = int(_getenv("YUE2_MAX_TITLE", "100"))
         self.log_level: str = _getenv("LOG_LEVEL", "INFO").upper()
         # 管理口令：为空表示禁用 /api/admin/*（默认禁用最安全）
         self.admin_token: str = _getenv("ADMIN_TOKEN", "")

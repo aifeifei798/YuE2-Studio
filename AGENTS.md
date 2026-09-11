@@ -19,16 +19,19 @@ FastAPI (GPU) + Vite+React 前后端分离作曲工作台。单卡串行生成�
 - `outputs/audio/*.flac`、`outputs/artifacts/<id>/`、`outputs/history.json`（原子写；损坏自动备份 `*.bak.*`）。compose 用命名卷 `outputs`。
 - `task_id` 恒为 8 位 hex；`audio_url` 恒为同源 `/audio/<id>.flac`（前后端都有格式校验，改动时保持）。
 - 取消任务只对排队中有效，运行中返回 409（GPU 不可抢占）。
+- 删除歌曲只有管理端（`DELETE /api/admin/history`，Studio 页登录后才显示按钮）；公开 `/healthz` 无敏感字段，模型错误原文只在 `GET /api/admin/health`。
+- `POST /api/generate` 按 IP 限流（`YUE2_SUBMIT_PER_HOUR`，nginx 透传 `X-Forwarded-For`）；排队快照 `outputs/pending.json`，重启自动恢复 pending 任务。
 
-## 验证（无测试/CI/lint，一律手动）
+## 验证（pytest + tsc + compose config，CI 同款）
 
 ```bash
-python3 -m py_compile backend/app/main.py backend/app/core/*.py backend/app/routers/*.py backend/app/services/*.py
-cd web && npm run build   # 含 tsc 类型检查
-docker compose config     # 改编排后必跑；无 .env 也能过（required: false）
+python -m pytest backend/tests -q   # 需先 pip install -r requirements-dev.txt；stub yue2，无需 GPU
+cd web && npm run build             # 含 tsc 类型检查；改完前端必跑，否则后端 / 报 500
+docker compose config               # 改编排后必跑；无 .env 也能过（required: false）
 ```
 
-- 后端冒烟需 stub `yue2`（重依赖 dev 环境没有）：`sys.modules["yue2"]` 塞假 `YuE2Pipeline`，再用 `TestClient(backend.app.main:app)` 走 `POST /api/generate` → 轮询 `GET /api/tasks/{id}` 到 `succeeded`。
+- 测试 fixture 说明：`asyncio.Queue` 会绑定首次触碰它的 event loop，所以全 session 只用**一个** `TestClient`（见 `conftest.py` 注释），逐用例只清数据不清 client——不要改成每用例开关 client。
+- `get_settings()` 带 `lru_cache`：测试里改 env 或运行时配置后必须调 `reload_settings()`（fixture 每次自动还原）。
 - 前后端联调：先起 api（8000），再 `web/npm run dev`，不要直接 `vite preview` 测 API。
 
 ## 卫生

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { apiFetch, isSafeAudioUrl, type HistoryRecord } from "../lib/api";
+import { apiFetch, getAdminToken, isSafeAudioUrl, type HistoryRecord } from "../lib/api";
 
 const DRAFT_KEY = "yue2-draft-v1";
 const TASK_ID_RE = /^[0-9a-f]{8}$/;
@@ -24,6 +24,8 @@ export default function Studio(props: { serverState: string; refreshServer: () =
   const [query, setQuery] = useState("");
   const [current, setCurrent] = useState<HistoryRecord | null>(null);
   const [logs, setLogs] = useState<string[]>(["[Ready] 系统就绪，等待指令"]);
+  // 删除是管理操作：无 admin token 时不展示删除按钮
+  const [isAdmin] = useState(() => getAdminToken() !== "");
   const audioRef = useRef<HTMLAudioElement>(null);
   const pollRef = useRef<number | null>(null);
 
@@ -92,7 +94,7 @@ export default function Studio(props: { serverState: string; refreshServer: () =
     if (!TASK_ID_RE.test(id)) return;
     if (!confirm("确定删除该曲目吗？音频文件也会一起删除。")) return;
     try {
-      await apiFetch(`/api/history/${id}`, { method: "DELETE" });
+      await apiFetch(`/api/admin/history/${id}`, { method: "DELETE" }, true);
       setHistory((h) => h.filter((x) => x.task_id !== id));
       setTotal((t) => Math.max(0, t - 1));
       pushLog(`已删除曲目 ${id}`);
@@ -245,7 +247,7 @@ export default function Studio(props: { serverState: string; refreshServer: () =
                 <div className="t">{item.title}</div>
                 <div className="s">Seed: {item.seed}</div>
               </div>
-              <button className="mini danger" onClick={(e) => { e.stopPropagation(); removeItem(item.task_id); }}>删</button>
+              {isAdmin && <button className="mini danger" onClick={(e) => { e.stopPropagation(); removeItem(item.task_id); }}>删</button>}
             </div>
           ))}
         </div>

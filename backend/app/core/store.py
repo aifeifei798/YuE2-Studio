@@ -11,6 +11,7 @@ import re
 import shutil
 import tempfile
 import threading
+import time
 from pathlib import Path
 from typing import Any, Deque, Dict, List, Tuple
 
@@ -26,6 +27,17 @@ task_queue: asyncio.Queue[str] = asyncio.Queue()
 tasks: Dict[str, Dict[str, Any]] = {}
 history_lock = threading.Lock()
 worker_task: Any = None
+# worker 心跳（monotonic 秒）：看门狗与 healthz 据此判断 worker 是否存活
+worker_heartbeat: float = 0.0
+
+
+def beat() -> None:
+    global worker_heartbeat
+    worker_heartbeat = time.monotonic()
+
+
+def worker_alive(timeout_sec: float = 60.0) -> bool:
+    return worker_heartbeat > 0 and (time.monotonic() - worker_heartbeat) < timeout_sec
 
 # 模型句柄（延迟加载，缺依赖时服务仍可启动并报 503）
 pipe: Any = None
@@ -34,6 +46,32 @@ model_error: str = ""
 
 # 内存日志环，供 /api/admin/logs 拉取（容器内看日志最省事的方式）
 log_buffer: Deque[str] = collections.deque(maxlen=500)
+
+
+# 提交限流：ip -> 最近 1 小时内的提交时间戳（monotonic 秒）
+submit_hits: Dict[str, Deque[float]] = {}
+
+
+def check_submit_rate(ip: str, per_hour: int) -> bool:
+    """返回 True 表示允许本次提交；超限返回 False。per_hour<=0 表示不限。"""
+    if per_hour <= 0:
+        return True
+    now = time.monotonic()
+    window = now - 3600.0
+    hits = submit_hits.get(ip)
+    if hits is None:
+        hits = collections.deque()
+        submit_hits[ip] = hits
+    while hits and hits[0] < window:
+        hits.popleft()
+    if len(hits) >= per_hour:
+        return False
+    hits.append(now)
+    # 顺手回收长期不活跃的 ip，防止字典无限增长
+    if len(submit_hits) > 10000:
+        for k in [k for k, v in submit_hits.items() if not v or v[-1] < window]:
+            del submit_hits[k]
+    return True
 
 
 class RingBufferHandler(logging.Handler):
@@ -50,6 +88,10 @@ def now_str() -> str:
 
 def _history_file() -> Path:
     return get_settings().history_file
+
+
+def _pending_file() -> Path:
+    return get_settings().output_dir / "pending.json"
 
 
 def _backup_corrupt_history() -> None:
@@ -107,6 +149,67 @@ def remove_history_record(task_id: str) -> Dict[str, Any] | None:
         if removed is not None:
             _write_history_atomic(kept)
         return removed
+
+
+# ----------------- 排队快照：重启不丢 pending 任务 -----------------
+_PENDING_FIELDS = ("task_id", "title", "style", "lyrics", "cot", "seed", "created_at", "client")
+
+
+def save_pending_snapshot() -> None:
+    """把当前排队中的任务落盘（只含 JSON 安全字段）。"""
+    try:
+        queued: List[str] = list(task_queue._queue)  # type: ignore[attr-defined]
+    except Exception:
+        queued = []
+    snapshot = [
+        {k: tasks[tid].get(k) for k in _PENDING_FIELDS}
+        for tid in queued
+        if tid in tasks
+    ]
+    try:
+        pf = _pending_file()
+        pf.parent.mkdir(parents=True, exist_ok=True)
+        fd, tmp_path = tempfile.mkstemp(dir=str(pf.parent), prefix="pending.", suffix=".tmp")
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                json.dump(snapshot, f, ensure_ascii=False, indent=2)
+            os.replace(tmp_path, pf)
+        finally:
+            try:
+                if os.path.exists(tmp_path):
+                    os.remove(tmp_path)
+            except OSError:
+                pass
+    except Exception:
+        log.exception("排队快照写入失败")
+
+
+def load_pending_snapshot() -> List[Dict[str, Any]]:
+    pf = _pending_file()
+    if not pf.exists():
+        return []
+    try:
+        data = json.loads(pf.read_text(encoding="utf-8"))
+        if not isinstance(data, list):
+            return []
+        return [d for d in data if isinstance(d, dict) and TASK_ID_RE.match(str(d.get("task_id", "")))]
+    except Exception:
+        log.exception("排队快照读取失败，已忽略")
+        return []
+
+
+def cleanup_tmp_files() -> None:
+    """清掉上次崩溃残留的 *.tmp 音频/快照临时文件。"""
+    s = get_settings()
+    for d in (s.audio_dir, s.output_dir):
+        if not d.exists():
+            continue
+        for tmp in d.glob("*.tmp"):
+            try:
+                tmp.unlink()
+                log.info("清理残留临时文件 %s", tmp.name)
+            except OSError:
+                pass
 
 
 def migrate_legacy_flat_outputs() -> None:

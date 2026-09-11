@@ -13,6 +13,7 @@ export default function Admin() {
   const [authed, setAuthed] = useState(!!getAdminToken());
   const [tab, setTab] = useState<"queue" | "disk" | "logs" | "config">("queue");
   const [queue, setQueue] = useState<QueueResp | null>(null);
+  const [health, setHealth] = useState<{ model_loaded: boolean; model_error?: string; worker_alive?: boolean } | null>(null);
   const [disk, setDisk] = useState<Record<string, number | string> | null>(null);
   const [logs, setLogs] = useState<string[]>([]);
   const [cfg, setCfg] = useState<Record<string, unknown> | null>(null);
@@ -22,7 +23,10 @@ export default function Admin() {
   const load = useCallback(async () => {
     setErr("");
     try {
-      if (tab === "queue") setQueue(await apiFetch<QueueResp>("/api/admin/queue", {}, true));
+      if (tab === "queue") {
+        setQueue(await apiFetch<QueueResp>("/api/admin/queue", {}, true));
+        setHealth(await apiFetch<{ model_loaded: boolean; model_error?: string; worker_alive?: boolean }>("/api/admin/health", {}, true));
+      }
       if (tab === "disk") setDisk(await apiFetch<Record<string, number | string>>("/api/admin/disk", {}, true));
       if (tab === "logs") {
         const d = await apiFetch<{ items: string[] }>("/api/admin/logs?tail=200", {}, true);
@@ -46,10 +50,22 @@ export default function Admin() {
     return () => clearInterval(t);
   }, [authed, load]);
 
-  function login() {
-    setAdminToken(token.trim());
-    setAuthed(!!token.trim());
+  async function login() {
+    const tok = token.trim();
+    if (!tok) return;
     setErr("");
+    try {
+      // 登录即探活：token 错立刻提示，不放行进空白页
+      const res = await fetch("/api/admin/queue", { headers: { Authorization: `Bearer ${tok}` } });
+      if (!res.ok) {
+        const detail = await res.json().then((j) => j.detail).catch(() => `HTTP ${res.status}`);
+        throw new Error(typeof detail === "string" ? detail : `HTTP ${res.status}`);
+      }
+      setAdminToken(tok);
+      setAuthed(true);
+    } catch (e) {
+      setErr((e as Error).message);
+    }
   }
 
   async function cancel(id: string) {
@@ -107,6 +123,12 @@ export default function Admin() {
         {tab === "queue" && queue && (
           <>
             <div className="hint">排队 {queue.pending_count} / 上限 {queue.max_queue}</div>
+            {health && (
+              <div className="hint">
+                模型：{health.model_loaded ? "已加载" : "未加载"} · worker：{health.worker_alive ? "存活" : "异常"}
+                {!health.model_loaded && health.model_error ? ` · ${health.model_error.slice(0, 200)}` : ""}
+              </div>
+            )}
             <h3>Running</h3>
             {queue.running ? <div className="pre">{queue.running.task_id} · {queue.running.title}</div> : <div className="hint">空闲</div>}
             <h3>Pending</h3>

@@ -20,6 +20,21 @@ log = logging.getLogger("yue2-studio")
 router = APIRouter(prefix="/api/admin", dependencies=[Depends(require_admin)])
 
 
+@router.get("/health")
+def admin_health():
+    """管理视角的健康详情（含模型错误原文，公开 healthz 不暴露）。"""
+    s = get_settings()
+    return {
+        "model_loaded": store.model_loaded,
+        "model_repo": s.model_repo,
+        "model_device": s.model_device,
+        "model_error": store.model_error,
+        "worker_alive": store.worker_alive(),
+        "queue_pending": store.task_queue.qsize(),
+        "history_count": len(store.get_all_history()),
+    }
+
+
 @router.get("/queue")
 def admin_queue():
     queued, pending, running = queue_snapshot()
@@ -36,9 +51,10 @@ def admin_tasks(status: Optional[str] = Query(default=None), limit: int = Query(
     items = list(store.tasks.values())
     if status:
         items = [t for t in items if t.get("status") == status]
-    # pending/running 优先，其次按创建时间倒序
-    order = {"running": 0, "pending": 1, "failed": 2, "succeeded": 3}
-    items.sort(key=lambda t: (order.get(t.get("status"), 9), t.get("created_at", "")), reverse=False)
+    # pending/running 优先，同状态内新的在前（运维先看最新）
+    pri = {"running": 0, "pending": 1, "failed": 2, "succeeded": 3}
+    items.sort(key=lambda t: t.get("created_at", ""), reverse=True)
+    items.sort(key=lambda t: pri.get(t.get("status"), 9))
     return {"total": len(items), "items": [public_task_view(t) for t in items[:limit]]}
 
 
@@ -65,6 +81,7 @@ def admin_delete_history(task_id: str):
     removed = store.remove_history_record(task_id)
     store.tasks.pop(task_id, None)
     safe_delete_task_files(task_id)
+    store.save_pending_snapshot()
     if removed is None:
         raise HTTPException(status_code=404, detail="记录不存在")
     log.info("🗑 管理员删除历史 [%s]", task_id)

@@ -11,9 +11,16 @@ from ..core import store
 from ..core.config import get_settings
 from ..core.store import TASK_ID_RE
 from ..models.schemas import GenerateRequest, TaskCreateResponse
-from ..services.inference import safe_delete_task_files
 
 router = APIRouter()
+
+
+def client_ip(request: Request) -> str:
+    # 反代后取 X-Forwarded-For 首段（nginx 已透传），直连取对端地址
+    fwd = request.headers.get("x-forwarded-for", "")
+    if fwd:
+        return fwd.split(",")[0].strip() or "unknown"
+    return request.client.host if request.client else "unknown"
 
 
 def public_task_view(task: dict) -> dict:
@@ -41,13 +48,14 @@ def public_task_view(task: dict) -> dict:
 @router.get("/healthz")
 def healthz():
     s = get_settings()
+    alive = store.worker_alive()
     return {
-        "status": "ok" if store.model_loaded else "degraded",
+        "status": "ok" if (store.model_loaded and alive) else "degraded",
         "model_loaded": store.model_loaded,
         "model_repo": s.model_repo,
-        "model_error": store.model_error[:300] if store.model_error else "",
         "queue_pending": store.task_queue.qsize(),
         "history_count": len(store.get_all_history()),
+        "worker_alive": alive,
     }
 
 
@@ -59,6 +67,12 @@ async def generate_music(req: GenerateRequest, request: Request):
         raise HTTPException(status_code=503, detail="模型正在加载或加载失败，请稍后重试")
     if store.task_queue.qsize() >= s.max_queue:
         raise HTTPException(status_code=429, detail=f"当前排队任务已满（{s.max_queue}），请稍后再试")
+    ip = client_ip(request)
+    if not store.check_submit_rate(ip, s.submit_per_hour):
+        raise HTTPException(
+            status_code=429,
+            detail=f"提交过于频繁（每 IP 每小时限 {s.submit_per_hour} 次），请稍后再试",
+        )
 
     title = req.title.strip() if req.title and req.title.strip() else "未命名歌曲"
     actual_seed = req.seed if req.seed is not None else random.randint(1, 2**31 - 1)
@@ -72,10 +86,11 @@ async def generate_music(req: GenerateRequest, request: Request):
         "seed": actual_seed,
         "status": "pending",
         "created_at": store.now_str(),
-        "client": request.client.host if request.client else "unknown",
+        "client": ip,
     }
     store.tasks[task_id] = task
     await store.task_queue.put(task_id)
+    store.save_pending_snapshot()
     return {
         "task_id": task_id,
         "status": "pending",
@@ -115,16 +130,3 @@ def fetch_history(
     if limit is None:
         return history[:200]
     return {"total": total, "offset": offset, "limit": limit, "items": history[offset : offset + limit]}
-
-
-@router.delete("/api/history/{task_id}")
-def delete_history(task_id: str):
-    """普通用户删除自己的历史（兼容老客户端）。管理删除请走 /api/admin/history。"""
-    if not TASK_ID_RE.match(task_id):
-        raise HTTPException(status_code=400, detail="非法 task_id")
-    removed = store.remove_history_record(task_id)
-    store.tasks.pop(task_id, None)
-    safe_delete_task_files(task_id)
-    if removed is None:
-        raise HTTPException(status_code=404, detail="记录不存在")
-    return {"status": "deleted", "task_id": task_id}

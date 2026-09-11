@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import shutil
 from pathlib import Path
 from typing import Any, Dict
@@ -44,7 +45,10 @@ def run_generation(task: Dict[str, Any]) -> Dict[str, Any]:
         seed=task["seed"],
     )
     s.audio_dir.mkdir(parents=True, exist_ok=True)
-    song.save(str(file_path))
+    # 先写临时文件再原子改名：播放器永远不会读到半截写入中的 flac
+    tmp_path = file_path.with_suffix(".flac.tmp")
+    song.save(str(tmp_path))
+    os.replace(tmp_path, file_path)
     try:
         artifacts_dir.mkdir(parents=True, exist_ok=True)
         song.save_artifacts(str(artifacts_dir))

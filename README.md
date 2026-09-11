@@ -61,7 +61,7 @@ docker compose down                   # 停服（outputs 卷保留，音频/历�
 ```
 
 - 备份：`outputs` 是命名卷（确切名称用 `docker volume ls | grep outputs` 确认，一般为 `yue2-studio_outputs`），直接快照它即可：`docker run --rm -v yue2-studio_outputs:/data -v $(pwd):/bak alpine tar czf /bak/outputs-$(date +%F).tgz -C /data .`。
-- 磁盘：管理页 Disk 标签看 `audio/artifacts` 占用；删歌用管理页或 `DELETE /api/history/{id}`（会连音频一起删）。
+- 磁盘：管理页 Disk 标签看 `audio/artifacts` 占用；删歌用管理页（`DELETE /api/admin/history/{id}`，会连音频一起删；Studio 页登录管理后才显示删除按钮）。
 - api 永远单副本：不要 `docker compose up --scale api=2`，内存队列会让第二个副本的排队静默失效。
 
 ### 公网部署追加项
@@ -87,6 +87,10 @@ YUE2_WEB_IMAGE=ghcr.io/<owner>/yue2-web:<tag>
 docker compose pull && docker compose up -d   # 注意：不要再加 --build
 ```
 
+> 注意：GHCR 的 `yue2-api` 镜像**不含** `yue2`/`torch` 重依赖（体积原因，Dockerfile 里是注释说明的）。
+> 用它部署时，需按 YuE2 官方指引把模型依赖装进镜像（`backend/Dockerfile` 里加一行 `RUN pip install`），
+> 否则服务只能启动、`/healthz` 报 `degraded`，生成报 503。
+
 管理页：`http://<host>/#/admin`，请求头 `Authorization: Bearer $ADMIN_TOKEN`。`ADMIN_TOKEN` 为空则 `/api/admin/*` 直接 403（默认安全）。
 
 ## 接口
@@ -94,12 +98,12 @@ docker compose pull && docker compose up -d   # 注意：不要再加 --build
 | 方法 | 路径 | 说明 |
 |------|------|------|
 | GET | `/`、`/#/admin` | 新版前端（`web/dist`，缺失则 500 提示先构建） |
-| GET | `/healthz` | `model_loaded / queue_pending / history_count` |
-| POST | `/api/generate` | 入队 202 `{task_id, queue_position, seed}`，轮询任务 |
+| GET | `/healthz` | 公开健康（`model_loaded / worker_alive / queue_pending / history_count`，无敏感明细） |
+| POST | `/api/generate` | 入队 202 `{task_id, queue_position, seed}`，轮询任务；每 IP 每小时限 `YUE2_SUBMIT_PER_HOUR` 次 |
 | GET | `/api/tasks/{id}` | `pending / running / succeeded(+record) / failed(+error)` |
 | GET | `/api/history?limit=&offset=&q=` | 无 `limit` 兼容老数组；有则 `{total, items}` |
-| DELETE | `/api/history/{id}` | 用户删自己的历史（含文件） |
 | GET | `/audio/{id}.flac` | 仅音频子目录，`history.json` 永不静态暴露 |
+| GET | `/api/admin/health` | 模型/ worker 详情（含 `model_error` 原文，需管理鉴权） |
 | GET | `/api/admin/queue` | 排队+运行中（需管理鉴权） |
 | POST | `/api/admin/tasks/{id}/cancel` | 取消排队中任务（运行中 409） |
 | GET | `/api/admin/tasks?status=&limit=` | 全量任务表 |

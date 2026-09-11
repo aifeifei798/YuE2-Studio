@@ -14,8 +14,11 @@ from .core.config import get_settings
 from .core.store import (
     TASK_ID_RE,
     RingBufferHandler,
+    cleanup_tmp_files,
     get_all_history,
+    load_pending_snapshot,
     migrate_legacy_flat_outputs,
+    task_queue,
     tasks,
 )
 from .routers import admin as admin_router
@@ -30,17 +33,40 @@ log = logging.getLogger("yue2-studio")
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     s = get_settings()
-    # 日志：控制台 + 内存环（供管理页拉取）
-    handler = RingBufferHandler()
-    handler.setFormatter(logging.Formatter("%(asctime)s | %(levelname)-7s | %(message)s"))
-    logging.getLogger().addHandler(handler)
-    logging.getLogger("yue2-studio").addHandler(handler)
+    # 日志：控制台 + 内存环（供管理页拉取）；复用已存在的 handler，
+    # lifespan 多次执行（如测试）也不得重复挂载，否则日志翻倍
+    root_logger = logging.getLogger()
+    handler = next((h for h in root_logger.handlers if isinstance(h, RingBufferHandler)), None)
+    if handler is None:
+        handler = next(
+            (h for h in logging.getLogger("yue2-studio").handlers if isinstance(h, RingBufferHandler)),
+            None,
+        )
+    if handler is None:
+        handler = RingBufferHandler()
+        handler.setFormatter(logging.Formatter("%(asctime)s | %(levelname)-7s | %(message)s"))
+        root_logger.addHandler(handler)
+    # 显式定级：basicConfig 在 root 已有 handler 时是空操作（如 pytest/uvicorn 接管），
+    # 不显式 setLevel 会导致 INFO 日志到不了内存环
+    logging.getLogger("yue2-studio").setLevel(getattr(logging, s.log_level, logging.INFO))
 
     migrate_legacy_flat_outputs()
+    cleanup_tmp_files()
     for rec in get_all_history():
         tid = rec.get("task_id")
         if isinstance(tid, str) and TASK_ID_RE.match(tid) and tid not in tasks:
             tasks[tid] = {"task_id": tid, "status": "succeeded", "record": rec, **rec}
+    # 恢复上次未消费完的排队任务（运行中任务因进程结束已中断，不恢复）
+    restored = 0
+    for item in load_pending_snapshot():
+        tid = item["task_id"]
+        if tid in tasks:
+            continue
+        tasks[tid] = {**item, "status": "pending", "restored": True}
+        task_queue.put_nowait(tid)
+        restored += 1
+    if restored:
+        log.info("从排队快照恢复 %d 个任务", restored)
     await asyncio.to_thread(load_model_blocking)
     store_module.worker_task = asyncio.create_task(worker_loop())
     yield
@@ -83,13 +109,6 @@ def create_app() -> FastAPI:
         if dist_index.exists():
             return FileResponse(str(dist_index))
         raise HTTPException(status_code=500, detail="前端缺失：请先在 web/ 执行 npm run build")
-
-    @app.get("/admin/{full_path:path}", include_in_schema=False)
-    def admin_spa(full_path: str):
-        # SPA 回退：/admin/* 都返回同一 index，保证刷新不 404
-        if dist_index.exists():
-            return FileResponse(str(dist_index))
-        raise HTTPException(status_code=404, detail="管理前端未构建")
 
     return app
 

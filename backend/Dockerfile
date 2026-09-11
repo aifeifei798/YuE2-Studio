@@ -16,7 +16,7 @@ RUN mkdir -p /app/outputs/audio /app/outputs/artifacts
 EXPOSE 8000
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=60s --retries=3 \
-  CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/healthz')" || exit 1
+  CMD python -c "import os,urllib.request;urllib.request.urlopen(f\"http://127.0.0.1:{os.getenv('YUE2_PORT','8000')}/healthz\")" || exit 1
 
-# 必须单 worker：GPU 队列在进程内存中
-CMD ["uvicorn", "backend.app.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1"]
+# 必须单 worker：GPU 队列在进程内存中；端口跟随 YUE2_PORT
+CMD ["sh", "-c", "uvicorn backend.app.main:app --host 0.0.0.0 --port ${YUE2_PORT:-8000} --workers 1"]
