@@ -1,0 +1,4 @@
+fastapi>=0.110,<1
+uvicorn[standard]>=0.29
+pydantic>=2.6
+# YuE2 模型依官方指引另行安装（yue2 / torch 等重依赖不 pin 在此）

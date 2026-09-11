@@ -1,0 +1,49 @@
+# YuE2-Studio：前后端分离（api GPU + web 静态），共用 outputs 卷。
+# 单机：docker compose up --build ；公网：改 CORS_ORIGINS + ADMIN_TOKEN。
+services:
+  api:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    image: ${YUE2_API_IMAGE:-yue2-api:latest}
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      YUE2_OUTPUT_DIR: /app/outputs
+    volumes:
+      - outputs:/app/outputs
+    expose:
+      - "8000"
+    # 如需本机直调可打开 ports（默认只经 web 反代，避免 CORS/鉴权绕行）：
+    # ports:
+    #   - "8000:8000"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/healthz')"]
+      interval: 30s
+      timeout: 5s
+      start_period: 60s
+      retries: 3
+    restart: unless-stopped
+
+  web:
+    build:
+      context: ./web
+      dockerfile: Dockerfile
+    image: ${YUE2_WEB_IMAGE:-yue2-web:latest}
+    ports:
+      - "80:80"
+    depends_on:
+      api:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  outputs:

@@ -1,0 +1,2 @@
+# 后端依赖（根 requirements.txt 仅转发到此，保持老安装方式可用）
+-r backend/requirements.txt
