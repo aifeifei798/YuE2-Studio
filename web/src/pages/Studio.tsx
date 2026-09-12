@@ -1,5 +1,23 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
+  Clock,
+  Dices,
+  Disc3,
+  Download,
+  FileText,
+  History,
+  ListMusic,
+  LogOut,
+  Pause,
+  Play,
+  Search,
+  Sparkles,
+  Terminal,
+  Trash2,
+  User,
+  Wand2,
+} from "lucide-react";
+import {
   apiFetch,
   clearUserCreds,
   getAdminToken,
@@ -11,6 +29,10 @@ import {
   type QuotaInfo,
 } from "../lib/api";
 import { useModal } from "../components/Modal";
+import { useToast } from "../components/Toast";
+import Cover from "../components/Cover";
+import Waveform from "../components/Waveform";
+import { EmptyState } from "../components/Stat";
 
 const DRAFT_KEY = "yue2-draft-v1";
 const TASK_ID_RE = /^[0-9a-f]{8}$/;
@@ -25,6 +47,15 @@ const PRESET = {
   seed: "12300",
 };
 
+const STYLE_PRESETS = [
+  { name: "🌃 City Pop", style: "City Pop, upbeat, danceable, groovy bass, electric guitar, synth, neon city night" },
+  { name: "🏮 古风", style: "Chinese ancient style, guzheng, pipa, bamboo flute, ethereal female vocal, poetic" },
+  { name: "🎸 民谣", style: "Folk, warm acoustic guitar, gentle male vocal, nostalgic, storytelling" },
+  { name: "🎧 电子", style: "EDM, energetic synth, four-on-the-floor, euphoric drop, futuristic" },
+  { name: "🥁 摇滚", style: "Rock, powerful electric guitar, punchy drums, passionate male vocal, anthemic" },
+  { name: "🎷 爵士", style: "Jazz, smooth saxophone, walking bass, brushed drums, smoky female vocal, late night" },
+];
+
 export default function Studio(props: { serverState: string; refreshServer: () => void }) {
   const [title, setTitle] = useState("");
   const [style, setStyle] = useState("");
@@ -34,16 +65,20 @@ export default function Studio(props: { serverState: string; refreshServer: () =
   const [busy, setBusy] = useState(false);
   const [busyText, setBusyText] = useState("");
   const [history, setHistory] = useState<HistoryRecord[]>([]);
+  const [histLoading, setHistLoading] = useState(false);
   const [total, setTotal] = useState(0);
   const [query, setQuery] = useState("");
   const [page, setPage] = useState(0);
   const [current, setCurrent] = useState<HistoryRecord | null>(null);
+  const [playing, setPlaying] = useState(false);
+  const [centerTab, setCenterTab] = useState<"profile" | "lyrics" | "logs">("profile");
   const [logs, setLogs] = useState<string[]>(["[Ready] 系统就绪，等待指令"]);
   const [user, setUser] = useState<QuotaInfo | null>(null);
   const [loginName, setLoginName] = useState("");
   const [loginKey, setLoginKey] = useState("");
   const [mineOnly, setMineOnly] = useState(false);
   const modal = useModal();
+  const { toast } = useToast();
   // 删除是管理操作：实时跟随 admin token（同页登录管理后无需刷新即显示）
   const [isAdmin, setIsAdmin] = useState(() => getAdminToken() !== "");
   useEffect(() => {
@@ -75,6 +110,7 @@ export default function Studio(props: { serverState: string; refreshServer: () =
   }, []);
 
   const loadHistory = useCallback(async () => {
+    setHistLoading(true);
     try {
       const params = new URLSearchParams({ limit: String(PAGE_SIZE), offset: String(page * PAGE_SIZE) });
       if (query.trim()) params.set("q", query.trim());
@@ -91,6 +127,8 @@ export default function Studio(props: { serverState: string; refreshServer: () =
       setTotal(data.total ?? (data.items || []).length);
     } catch (e) {
       pushLog(`拉取历史失败: ${(e as Error).message}`);
+    } finally {
+      setHistLoading(false);
     }
   }, [query, page, mineOnly, pushLog]);
 
@@ -135,6 +173,23 @@ export default function Studio(props: { serverState: string; refreshServer: () =
 
   useEffect(() => () => { if (pollTimerRef.current) window.clearInterval(pollTimerRef.current); }, []);
 
+  // 播放状态跟随 audio 元素
+  useEffect(() => {
+    const el = audioRef.current;
+    if (!el) return;
+    const onPlay = () => setPlaying(true);
+    const onPause = () => setPlaying(false);
+    const onEnded = () => setPlaying(false);
+    el.addEventListener("play", onPlay);
+    el.addEventListener("pause", onPause);
+    el.addEventListener("ended", onEnded);
+    return () => {
+      el.removeEventListener("play", onPlay);
+      el.removeEventListener("pause", onPause);
+      el.removeEventListener("ended", onEnded);
+    };
+  }, []);
+
   async function refreshQuota() {
     if (!getUserCreds()) return;
     try {
@@ -161,6 +216,7 @@ export default function Studio(props: { serverState: string; refreshServer: () =
       setMineOnly(false);
       setPage(0);
       pushLog(`已登录：${data.name}（配额 ${data.quota_used}/${data.quota_total <= 0 ? "不限" : data.quota_total}）`);
+      toast(`欢迎回来，${data.name} 🎉`);
     } catch (e) {
       pushLog(`登录失败: ${(e as Error).message}`);
       await modal.alert(`登录失败：${(e as Error).message}`);
@@ -191,12 +247,24 @@ export default function Studio(props: { serverState: string; refreshServer: () =
       return;
     }
     setCurrent(item);
+    setCenterTab("profile");
     const el = audioRef.current;
     if (el) {
       el.src = item.audio_url;
       el.play().catch(() => undefined);
     }
     pushLog(`正在播放: 《${item.title}》`);
+  }
+
+  function togglePlay() {
+    const el = audioRef.current;
+    if (!el || !current) return;
+    if (el.paused) el.play().catch(() => undefined);
+    else el.pause();
+  }
+
+  function randomSeed() {
+    setSeed(String(Math.floor(Math.random() * 2147483647)));
   }
 
   /** 管理员删任意；登录用户只能删归属自己的（匿名旧歌谁都不显示按钮）。 */
@@ -219,8 +287,10 @@ export default function Studio(props: { serverState: string; refreshServer: () =
       if (history.length <= 1 && page > 0) setPage(page - 1);
       else loadHistory();
       pushLog(`已删除曲目 ${id}`);
+      toast("已删除该曲目");
     } catch (e) {
       pushLog(`删除失败: ${(e as Error).message}`);
+      toast(`删除失败：${(e as Error).message}`, "err");
     }
   }
 
@@ -251,6 +321,7 @@ export default function Studio(props: { serverState: string; refreshServer: () =
           } else if (t.status === "succeeded" && t.record) {
             pollingRef.current.delete(taskId);
             pushLog(`创作成功！task=${taskId} 种子: ${meta.seed}`);
+            toast(`🎉《${t.record.title}》创作成功！`);
             // 回到首页并重载（服务端分页下不再本地 unshift）
             backToFirstPage();
             refreshQuota();
@@ -259,6 +330,7 @@ export default function Studio(props: { serverState: string; refreshServer: () =
           } else if (t.status === "failed") {
             pollingRef.current.delete(taskId);
             pushLog(`任务 ${taskId} 生成失败: ${t.error || "未知错误"}`);
+            toast(`生成失败：${t.error || "未知错误"}`, "err");
           }
         } catch (e) {
           pushLog(`轮询失败 ${taskId}: ${(e as Error).message}`);
@@ -326,105 +398,225 @@ export default function Studio(props: { serverState: string; refreshServer: () =
         true, // 登录后自动带 X-API-Key，记到个人名下并扣配额
       );
       pushLog(`已入队 task=${data.task_id}，第 ${data.queue_position} 位`);
+      toast(`已入队，第 ${data.queue_position} 位 🎶`);
       pollTask(data.task_id, data.seed);
     } catch (e) {
       if (pollingRef.current.size === 0) setBusy(false);
       pushLog(`提交失败: ${(e as Error).message}`);
+      toast(`提交失败：${(e as Error).message}`, "err");
     }
   }
 
   const lyricLines = lyrics ? lyrics.split("\n").length : 0;
   const lyricChars = lyrics.replace(/\s/g, "").length;
+  const quotaPct = user && user.quota_total > 0
+    ? Math.min(100, Math.round(((user.quota_used + (user.in_flight || 0)) / user.quota_total) * 100))
+    : 0;
+  const inFlight = pollingRef.current.size;
 
   return (
     <div className="layout cols3">
+      {/* 左：创作 */}
       <section className="panel">
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-          <label className="lbl" htmlFor="f-title">歌曲标题</label>
-          <button className="mini" onClick={() => { setTitle(PRESET.title); setStyle(PRESET.style); setLyrics(PRESET.lyrics); setCot(PRESET.cot); setSeed(PRESET.seed); }}>填入《今晚不眠》</button>
+        <div className="section-title">
+          <h3 style={{ margin: 0 }}><Wand2 size={15} /> 创作灵感</h3>
+          <button
+            className="mini"
+            onClick={() => { setTitle(PRESET.title); setStyle(PRESET.style); setLyrics(PRESET.lyrics); setCot(PRESET.cot); setSeed(PRESET.seed); toast("已填入示例《今晚不眠》"); }}
+          >
+            <Sparkles size={12} /> 试试《今晚不眠》
+          </button>
         </div>
+        <label className="lbl" htmlFor="f-title"><span>歌曲标题</span><span className={`count${title.length > limits.title ? " over" : ""}`}>{title.length} / {limits.title}</span></label>
         <input id="f-title" className="in" maxLength={limits.title} placeholder="给你的歌曲起个名字..." value={title} onChange={(e) => setTitle(e.target.value)} />
         <div className="row">
           <div>
-            <label className="lbl" htmlFor="f-seed">随机种子</label>
-            <input id="f-seed" className="in" type="number" min={0} max={2147483647} placeholder="留空则随机" value={seed} onChange={(e) => setSeed(e.target.value)} />
+            <label className="lbl" htmlFor="f-seed"><span>随机种子</span></label>
+            <div style={{ display: "flex", gap: 6 }}>
+              <input id="f-seed" className="in" type="number" min={0} max={2147483647} placeholder="留空随机" value={seed} onChange={(e) => setSeed(e.target.value)} style={{ fontFamily: "monospace" }} />
+              <button className="icon-btn" title="随机一个种子" onClick={randomSeed} style={{ width: 36, height: 36 }}><Dices size={15} /></button>
+            </div>
           </div>
           <div>
-            <label className="lbl" htmlFor="f-cot">思维模式</label>
-            <select id="f-cot" className="in" value={cot} onChange={(e) => setCot(e.target.value)}>
-              <option value="full">Full (推荐)</option>
-              <option value="none">None (直出)</option>
-            </select>
+            <label className="lbl"><span>思维模式</span></label>
+            <div className="seg">
+              <button className={cot === "full" ? "on" : ""} onClick={() => setCot("full")}>Full · 推荐</button>
+              <button className={cot === "none" ? "on" : ""} onClick={() => setCot("none")}>None · 直出</button>
+            </div>
           </div>
         </div>
-        <label className="lbl" htmlFor="f-style">曲风描述（{style.length} / {limits.style}）</label>
-        <textarea id="f-style" className="in" rows={2} maxLength={limits.style} value={style} onChange={(e) => setStyle(e.target.value)} />
-        <label className="lbl" htmlFor="f-lyrics">歌词（{lyricLines} 行 · {lyricChars} 字）</label>
-        <textarea id="f-lyrics" className="in" rows={12} maxLength={limits.lyrics} value={lyrics} onChange={(e) => setLyrics(e.target.value)} />
-        <div style={{ marginTop: 10 }}>
-          <button className="btn" onClick={submit}>{busy ? busyText || "处理中..." : "开始生成全曲"}</button>
-          <div className="hint">多人共享显卡时自动排队，可连续提交多首；草稿自动保存在本机。状态：{props.serverState}</div>
+        <label className="lbl" htmlFor="f-style"><span>曲风描述 Style</span><span className={`count${style.length > limits.style ? " over" : ""}`}>{style.length} / {limits.style}</span></label>
+        <textarea id="f-style" className="in" rows={3} maxLength={limits.style} placeholder="City Pop, upbeat, groovy bass..." value={style} onChange={(e) => setStyle(e.target.value)} />
+        <div className="chips">
+          {STYLE_PRESETS.map((p) => (
+            <button key={p.name} className="chip" onClick={() => setStyle(p.style)} title={p.style}>{p.name}</button>
+          ))}
+        </div>
+        <label className="lbl" htmlFor="f-lyrics"><span>歌词 Lyrics</span><span className="count">{lyricLines} 行 · {lyricChars} 字</span></label>
+        <textarea id="f-lyrics" className="in lyrics-box" rows={11} maxLength={limits.lyrics} placeholder="[Verse]&#10;..." value={lyrics} onChange={(e) => setLyrics(e.target.value)} />
+        <div style={{ marginTop: 12 }}>
+          <button className={`btn${busy ? " busy" : ""}`} onClick={submit} disabled={busy}>
+            {busy ? (busyText || "处理中...") : (<><Wand2 size={16} /> 开始生成全曲</>)}
+          </button>
+          {busy && <div className="progress indeterminate"><div /></div>}
+          <div className="hint">多人共享显卡时自动排队，可连续提交多首{inFlight > 0 ? `（在途 ${inFlight}）` : ""}；草稿自动保存在本机。状态：{props.serverState}</div>
           {limits.requireKey && !user && <div className="hint">本站点需登录后才能生成，请先在右侧登录。</div>}
         </div>
       </section>
 
-      <section style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-        <div className="panel">
-          <h3>{current ? current.title : "等待聆听"}</h3>
-          <div className="hint">{current ? `Seed: ${current.seed}` : "右侧点击曲目立即载入"}</div>
-          <audio ref={audioRef} controls preload="none" style={{ width: "100%", marginTop: 8 }} />
+      {/* 中：播放器 */}
+      <section style={{ display: "flex", flexDirection: "column", gap: 12, minWidth: 0 }}>
+        <div className="hero">
+          <div className="hero-bg">
+            {current
+              ? <Cover seed={current.seed} title={current.title} size={420} rounded={0} />
+              : (
+                <svg viewBox="0 0 400 220" preserveAspectRatio="xMidYMid slice">
+                  <defs>
+                    <radialGradient id="idle-b" cx="30%" cy="20%" r="90%">
+                      <stop offset="0%" stopColor="#1b2140" /><stop offset="100%" stopColor="#07080e" />
+                    </radialGradient>
+                  </defs>
+                  <rect width="400" height="220" fill="url(#idle-b)" />
+                  <circle cx="90" cy="70" r="80" fill="#7e22ce" opacity=".35" />
+                  <circle cx="310" cy="60" r="70" fill="#3b82f6" opacity=".3" />
+                  <circle cx="200" cy="150" r="90" fill="#6366f1" opacity=".25" />
+                </svg>
+              )}
+          </div>
+          <div className="hero-fg">
+            <div className="hero-title">
+              {playing && <span className="eq"><i /><i /><i /></span>}
+              {current ? current.title : "等待聆听 🎧"}
+            </div>
+            <div className="hero-sub">
+              {current ? (
+                <>
+                  <span>SEED {current.seed}</span>
+                  <span>·</span><span>{current.cot === "full" ? "Full 深度创作" : "None 直出"}</span>
+                  <span>·</span><span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}><Clock size={11} /> {current.created_at}</span>
+                </>
+              ) : "在右侧点一首歌，或在左侧开始你的第一首创作"}
+            </div>
+            <div className="wave-wrap">
+              {current ? (
+                <Waveform audioRef={audioRef} audioUrl={current.audio_url} playing={playing} />
+              ) : (
+                <div className="wave-fallback" aria-hidden>
+                  {Array.from({ length: 48 }, (_, i) => 10 + ((i * 37) % 50)).map((h, i) => (
+                    <i key={i} style={{ height: h, opacity: .35 }} />
+                  ))}
+                </div>
+              )}
+            </div>
+            <div className="player-controls">
+              <button className="play-btn" onClick={togglePlay} disabled={!current} title={playing ? "暂停" : "播放"}>
+                {playing ? <Pause /> : <Play style={{ marginLeft: 2 }} />}
+              </button>
+              {current && (
+                <a className="mini" href={current.audio_url} download title="下载 FLAC" style={{ textDecoration: "none", padding: "8px 14px" }}>
+                  <Download size={12} /> FLAC
+                </a>
+              )}
+              <span className="hint" style={{ margin: 0 }}>
+                {current ? (playing ? "正在播放…" : "已暂停，点击 ▶ 继续") : "暂无选中曲目"}
+              </span>
+            </div>
+            {/* 真实 audio 元素：wavesurfer 绑定它，保证单音源 */}
+            <audio ref={audioRef} preload="none" style={{ display: "none" }} />
+          </div>
         </div>
-        <div className="panel" style={{ flex: 1 }}>
-          <h3>本曲制作档案</h3>
-          {current ? (
-            <>
-              <div className="kv">
-                <span>种子：{current.seed}</span>
-                <span>模式：{current.cot}</span>
-                <span style={{ gridColumn: "1 / -1" }}>时间：{current.created_at}</span>
-              </div>
-              <div className="hint">风格</div>
-              <div className="pre">{current.style}</div>
-              <div className="hint">歌词</div>
-              <div className="pre">{current.lyrics}</div>
-            </>
-          ) : (<div className="hint">暂无选中曲目</div>)}
-        </div>
+
         <div className="panel">
-          <h3>控制台日志</h3>
-          <div className="logbox">{logs.map((l, i) => <div key={i}>{l}</div>)}</div>
+          <div className="subtabs">
+            <button className={centerTab === "profile" ? "on" : ""} onClick={() => setCenterTab("profile")}><Disc3 size={12} style={{ verticalAlign: -2 }} /> 制作档案</button>
+            <button className={centerTab === "lyrics" ? "on" : ""} onClick={() => setCenterTab("lyrics")}><FileText size={12} style={{ verticalAlign: -2 }} /> 歌词</button>
+            <button className={centerTab === "logs" ? "on" : ""} onClick={() => setCenterTab("logs")}><Terminal size={12} style={{ verticalAlign: -2 }} /> 日志</button>
+          </div>
+          {centerTab === "profile" && (
+            current ? (
+              <>
+                <div className="kv">
+                  <span>种子：{current.seed}</span>
+                  <span>模式：{current.cot}</span>
+                  <span>编号：{current.task_id}</span>
+                  <span>归属：{current.owner || "匿名"}</span>
+                  <span style={{ gridColumn: "1 / -1" }}>时间：{current.created_at}</span>
+                </div>
+                <div className="hint">风格</div>
+                <div className="pre">{current.style}</div>
+              </>
+            ) : (<EmptyState emoji="💿" title="还没有选中曲目" sub="右侧历史里点一首，档案会出现在这里" />)
+          )}
+          {centerTab === "lyrics" && (
+            current ? <div className="pre" style={{ maxHeight: 260 }}>{current.lyrics}</div>
+              : (<EmptyState emoji="📝" title="还没有选中曲目" />)
+          )}
+          {centerTab === "logs" && (
+            <div className="logbox" style={{ height: 180 }}>{logs.map((l, i) => <div key={i}>{l}</div>)}</div>
+          )}
         </div>
       </section>
 
-      <section className="panel">
-        <h3>创作历史 ({total})</h3>
+      {/* 右：历史 */}
+      <section className="panel" style={{ minWidth: 0 }}>
+        <div className="section-title">
+          <h3 style={{ margin: 0 }}><ListMusic size={15} /> 创作历史 ({total})</h3>
+        </div>
         {user ? (
-          <div className="userstrip">
-            <span>👤 {user.name} · 配额 {user.quota_used}/{user.quota_total <= 0 ? "不限" : user.quota_total}{user.in_flight ? `（在途 ${user.in_flight}）` : ""}</span>
-            <span style={{ display: "flex", gap: 6 }}>
-              <button className={`mini${mineOnly ? " active" : ""}`} onClick={() => { setMineOnly(!mineOnly); setPage(0); }}>
-                {mineOnly ? "只看我的 ✓" : "只看我的"}
-              </button>
-              <button className="mini" onClick={logout}>退出</button>
-            </span>
+          <div>
+            <div className="userstrip">
+              <span className="avatar"><User size={14} /></span>
+              <span style={{ minWidth: 0, flex: 1 }}>
+                <span style={{ fontWeight: 800, color: "#fff" }}>{user.name}</span>
+                <span style={{ color: "var(--mut)" }}> · {user.quota_total <= 0 ? "无限配额" : `剩 ${user.quota_left ?? "?"} 首`}{user.in_flight ? `（在途 ${user.in_flight}）` : ""}</span>
+                {user.quota_total > 0 && <span className="quota-bar"><div style={{ width: `${quotaPct}%` }} /></span>}
+              </span>
+              <span style={{ display: "flex", gap: 6 }}>
+                <button className={`mini${mineOnly ? " active" : ""}`} onClick={() => { setMineOnly(!mineOnly); setPage(0); }}>
+                  我的
+                </button>
+                <button className="icon-btn" title="退出登录" onClick={logout}><LogOut size={13} /></button>
+              </span>
+            </div>
           </div>
         ) : (
           <div className="userstrip">
-            <input className="in" style={{ width: 110 }} placeholder="用户名" value={loginName} onChange={(e) => setLoginName(e.target.value)} />
-            <input className="in" style={{ flex: 1 }} type="password" placeholder="Key（找管理员领取）" value={loginKey} onChange={(e) => setLoginKey(e.target.value)} />
-            <button className="mini" onClick={login}>登录</button>
+            <input className="in" style={{ width: 96, padding: "6px 10px" }} placeholder="用户名" value={loginName} onChange={(e) => setLoginName(e.target.value)} />
+            <input className="in" style={{ flex: 1, minWidth: 0, padding: "6px 10px" }} type="password" placeholder="Key（找管理员领取）" value={loginKey} onChange={(e) => setLoginKey(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") login(); }} />
+            <button className="mini primary" onClick={login}>登录</button>
           </div>
         )}
-        <input className="in" placeholder="搜索歌名或 Seed..." value={query} onChange={(e) => { setQuery(e.target.value); setPage(0); }} />
+        <div style={{ position: "relative" }}>
+          <Search size={13} style={{ position: "absolute", left: 11, top: 11, color: "#475569" }} />
+          <input className="in" placeholder="搜索歌名或 Seed..." value={query} onChange={(e) => { setQuery(e.target.value); setPage(0); }} style={{ paddingLeft: 30 }} />
+        </div>
         <div style={{ marginTop: 10 }}>
-          {history.length === 0 && <div className="hint">无匹配的曲目</div>}
+          {histLoading && history.length === 0 && (<><div className="skel" /><div className="skel" /><div className="skel" /></>)}
+          {!histLoading && history.length === 0 && (
+            <EmptyState emoji="🎼" title="还没有作品" sub={query ? "换个关键词试试" : "左侧写好词曲，点生成开始第一首"} />
+          )}
           {history.map((item) => (
             <div key={item.task_id} className={`hist-item${current?.task_id === item.task_id ? " playing" : ""}`} onClick={() => play(item)}>
-              <div style={{ minWidth: 0 }}>
-                <div className="t">{item.title}</div>
-                <div className="s">Seed: {item.seed}</div>
+              <Cover seed={item.seed} title={item.title} size={44} />
+              <div style={{ minWidth: 0, flex: 1 }}>
+                <div className="t">
+                  {current?.task_id === item.task_id && playing
+                    ? <span className="eq"><i /><i /><i /></span>
+                    : <History size={12} style={{ color: "#7c8aa0", flexShrink: 0 }} />}
+                  <span style={{ overflow: "hidden", textOverflow: "ellipsis" }}>{item.title}</span>
+                </div>
+                <div className="s"><span>Seed {item.seed}</span>{item.owner && <span className="owner-tag">{item.owner}</span>}</div>
               </div>
-              {canDelete(item) && <button className="mini danger" onClick={(e) => { e.stopPropagation(); removeItem(item.task_id); }}>删</button>}
+              {canDelete(item) && (
+                <button
+                  className="icon-btn danger"
+                  title="删除该曲目"
+                  onClick={(e) => { e.stopPropagation(); removeItem(item.task_id); }}
+                >
+                  <Trash2 size={13} />
+                </button>
+              )}
             </div>
           ))}
         </div>
@@ -434,6 +626,22 @@ export default function Studio(props: { serverState: string; refreshServer: () =
           <button className="mini" disabled={(page + 1) * PAGE_SIZE >= total} onClick={() => setPage(page + 1)}>下一页</button>
         </div>
       </section>
+
+      {/* 移动端迷你播放条 */}
+      <div className={`minibar${current ? " show" : ""}`}>
+        {current && (
+          <>
+            <Cover seed={current.seed} title={current.title} size={38} rounded={10} />
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontSize: 13, fontWeight: 800, color: "#fff", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{current.title}</div>
+              <div style={{ fontSize: 11, color: "var(--mut)", fontFamily: "monospace" }}>Seed {current.seed}</div>
+            </div>
+            <button className="play-btn" style={{ width: 38, height: 38 }} onClick={togglePlay}>
+              {playing ? <Pause size={16} /> : <Play size={16} style={{ marginLeft: 2 }} />}
+            </button>
+          </>
+        )}
+      </div>
     </div>
   );
 }

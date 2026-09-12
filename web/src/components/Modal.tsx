@@ -54,13 +54,14 @@ export function ModalProvider({ children }: { children: ReactNode }) {
       {req && (
         <div className="overlay" onClick={() => close(req.kind === "alert")}>
           <div className="dialog panel" role="alertdialog" onClick={(e) => e.stopPropagation()}>
-            <div className="pre" style={{ maxHeight: 200 }}>{req.message}</div>
-            <div style={{ display: "flex", gap: 8, marginTop: 12, justifyContent: "flex-end" }}>
+            <div style={{ fontSize: 26, marginBottom: 8 }}>{req.kind === "confirm" ? "🗑️" : "💡"}</div>
+            <div style={{ fontSize: 13.5, lineHeight: 1.7, color: "#e2e8f0", whiteSpace: "pre-wrap" }}>{req.message}</div>
+            <div style={{ display: "flex", gap: 8, marginTop: 14, justifyContent: "flex-end" }}>
               {req.kind === "confirm" && (
                 <button className="mini" onClick={() => close(false)}>取消</button>
               )}
-              <button className="mini" onClick={() => close(true)}>
-                {req.kind === "confirm" ? "确定" : "知道了"}
+              <button className={`mini${req.kind === "confirm" ? " primary" : ""}`} onClick={() => close(true)}>
+                {req.kind === "confirm" ? "确定删除" : "知道了"}
               </button>
             </div>
           </div>

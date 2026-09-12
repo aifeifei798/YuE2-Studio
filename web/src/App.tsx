@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useState } from "react";
+import { LayoutDashboard, Wand2 } from "lucide-react";
 import Studio from "./pages/Studio";
 import Admin from "./pages/Admin";
 import { ModalProvider } from "./components/Modal";
+import { ToastProvider } from "./components/Toast";
 import "./styles.css";
 
 function route(): string {
@@ -40,18 +42,28 @@ export default function App() {
 
   return (
     <ModalProvider>
-      <header className="topbar">
-        <div className="brand">YuE2 Studio <span className="badge">Studio + Admin</span></div>
-        <nav className="nav">
-          <a href="#/" className={!isAdmin ? "active" : ""}>创作</a>
-          <a href="#/admin" className={isAdmin ? "active" : ""}>管理</a>
-        </nav>
-        <div className="server-pill">
-          <span className={`dot ${serverOk ? "ok" : "warn"}`} />
-          <span>{serverState}</span>
-        </div>
-      </header>
-      {isAdmin ? <Admin /> : <Studio serverState={serverState} refreshServer={refreshServer} />}
+      <ToastProvider>
+        <header className="topbar">
+          <div className="brand">
+            <span className="brand-mark">🎵</span>
+            <span>YuE2 Studio</span>
+            <span className="badge">AI 作曲工坊</span>
+          </div>
+          <nav className="nav">
+            <a href="#/" className={!isAdmin ? "active" : ""}>
+              <Wand2 size={13} /> 创作
+            </a>
+            <a href="#/admin" className={isAdmin ? "active" : ""}>
+              <LayoutDashboard size={13} /> 管理
+            </a>
+          </nav>
+          <div className="server-pill" title="GPU 服务状态">
+            <span className={`dot ${serverOk ? "ok" : "warn"}`} />
+            <span>{serverState}</span>
+          </div>
+        </header>
+        {isAdmin ? <Admin /> : <Studio serverState={serverState} refreshServer={refreshServer} />}
+      </ToastProvider>
     </ModalProvider>
   );
 }

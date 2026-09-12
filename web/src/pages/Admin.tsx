@@ -1,6 +1,20 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  Cpu,
+  HardDrive,
+  KeyRound,
+  ListOrdered,
+  LogOut,
+  RefreshCw,
+  Settings2,
+  ShieldCheck,
+  Terminal,
+  XCircle,
+} from "lucide-react";
 import { apiFetch, formatBytes, getAdminToken, setAdminToken } from "../lib/api";
 import { useModal } from "../components/Modal";
+import { useToast } from "../components/Toast";
+import { EmptyState, StatCard } from "../components/Stat";
 
 interface QueueResp {
   pending_count: number;
@@ -21,10 +35,19 @@ interface KeyRow {
   last_used_at: string;
 }
 
+type Tab = "queue" | "disk" | "logs" | "config" | "keys";
+const TABS: { id: Tab; name: string; icon: typeof ListOrdered }[] = [
+  { id: "queue", name: "队列", icon: ListOrdered },
+  { id: "disk", name: "磁盘", icon: HardDrive },
+  { id: "logs", name: "日志", icon: Terminal },
+  { id: "config", name: "配置", icon: Settings2 },
+  { id: "keys", name: "密钥", icon: KeyRound },
+];
+
 export default function Admin() {
   const [token, setToken] = useState(getAdminToken());
   const [authed, setAuthed] = useState(!!getAdminToken());
-  const [tab, setTab] = useState<"queue" | "disk" | "logs" | "config" | "keys">("queue");
+  const [tab, setTab] = useState<Tab>("queue");
   const [queue, setQueue] = useState<QueueResp | null>(null);
   const [health, setHealth] = useState<{ model_loaded: boolean; model_error?: string; worker_alive?: boolean } | null>(null);
   const [disk, setDisk] = useState<Record<string, number | string> | null>(null);
@@ -37,6 +60,7 @@ export default function Admin() {
   const [requireKey, setRequireKey] = useState(false);
   const [err, setErr] = useState("");
   const modal = useModal();
+  const { toast } = useToast();
   // keys 标签状态
   const [keys, setKeys] = useState<KeyRow[]>([]);
   const [newName, setNewName] = useState("");
@@ -106,6 +130,7 @@ export default function Admin() {
       }
       setAdminToken(tok);
       setAuthed(true);
+      toast("已进入管理后台 🛠️");
     } catch (e) {
       setErr((e as Error).message);
     }
@@ -115,6 +140,7 @@ export default function Admin() {
     if (!(await modal.confirm(`取消排队任务 ${id}？`))) return;
     try {
       await apiFetch(`/api/admin/tasks/${id}/cancel`, { method: "POST" }, true);
+      toast("已取消该排队任务");
       load();
     } catch (e) {
       await modal.alert((e as Error).message);
@@ -143,7 +169,7 @@ export default function Admin() {
     }
     body.max_pending_per_ip = ppi;
     if (!Number.isInteger(ppk) || ppk < 0 || ppk > 100) {
-      await modal.alert("max_pending_per_key 必须是不超过 100 的整数（0 表示不限）");
+      await modal.alert("max_pending_per_key 必须是不超过 100 的整数（0 表示不限，防一人塞满队列）");
       return;
     }
     body.max_pending_per_key = ppk;
@@ -154,7 +180,7 @@ export default function Admin() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
       }, true);
-      await modal.alert("已更新（重启后以环境变量为准）");
+      toast("配置已热更新 ✅");
       load();
     } catch (e) {
       await modal.alert((e as Error).message);
@@ -185,6 +211,7 @@ export default function Admin() {
       setCreatedSecret(res.api_key);
       setNewName("");
       setNewNote("");
+      toast(`已为「${name}」创建 Key 🎉`);
       load();
     } catch (e) {
       await modal.alert((e as Error).message);
@@ -215,14 +242,11 @@ export default function Admin() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ quota_total: quota, enabled: editEnabled, note: editNote }),
       }, true);
-      pushSaved();
+      toast("已保存 ✅");
+      load();
     } catch (e) {
       await modal.alert((e as Error).message);
     }
-  }
-
-  function pushSaved() {
-    modal.alert("已保存").then(() => load());
   }
 
   async function delKey(id: number, name: string) {
@@ -233,6 +257,7 @@ export default function Admin() {
         setSelId(null);
         setKeyHist(null);
       }
+      toast(`已删除「${name}」的 Key`);
       load();
     } catch (e) {
       await modal.alert((e as Error).message);
@@ -244,6 +269,7 @@ export default function Admin() {
     try {
       const res = await apiFetch<{ api_key: string }>(`/api/admin/keys/${id}/reset`, { method: "POST" }, true);
       setCreatedSecret(res.api_key);
+      toast(`已为「${name}」换新 Key，请立即复制`);
       load();
     } catch (e) {
       await modal.alert((e as Error).message);
@@ -253,151 +279,203 @@ export default function Admin() {
   if (!authed) {
     return (
       <div className="layout" style={{ maxWidth: 480 }}>
-        <section className="panel">
-          <h3>管理登录</h3>
+        <section className="panel" style={{ textAlign: "center" }}>
+          <div style={{ fontSize: 40 }}>🛡️</div>
+          <h3 style={{ justifyContent: "center", fontSize: 16, color: "#fff", marginTop: 8 }}><ShieldCheck size={16} /> 管理登录</h3>
           <div className="hint">输入后端 ADMIN_TOKEN（请求头 Bearer）。未设置则管理接口禁用，属正常安全默认。</div>
-          <input className="in" type="password" placeholder="ADMIN_TOKEN" value={token} onChange={(e) => setToken(e.target.value)} />
+          <input
+            className="in"
+            type="password"
+            placeholder="ADMIN_TOKEN"
+            value={token}
+            onChange={(e) => setToken(e.target.value)}
+            onKeyDown={(e) => { if (e.key === "Enter") login(); }}
+            style={{ marginTop: 10, fontFamily: "monospace" }}
+          />
           <div style={{ marginTop: 10 }}>
             <button className="btn" onClick={login}>进入管理</button>
           </div>
-          {err && <div className="hint">{err}</div>}
+          {err && <div className="hint" style={{ color: "#fda4af" }}>{err}</div>}
         </section>
       </div>
     );
   }
 
+  const diskUsed = Number(disk?.disk_used_bytes ?? 0);
+  const diskTotal = Number(disk?.disk_total_bytes ?? 0);
+  const diskPct = diskTotal > 0 ? Math.min(100, Math.round((diskUsed / diskTotal) * 100)) : 0;
+
   return (
     <div className="layout">
       <section className="panel">
-        <div className="tabs">
-          {(["queue", "disk", "logs", "config", "keys"] as const).map((t) => (
-            <button key={t} className={tab === t ? "active" : ""} onClick={() => setTab(t)}>{t}</button>
-          ))}
-          <button onClick={() => { setAdminToken(""); setAuthed(false); }}>退出</button>
-          <button className="mini" onClick={load}>刷新</button>
+        <div className="section-title" style={{ flexWrap: "wrap", gap: 8 }}>
+          <div className="tabs" style={{ margin: 0 }}>
+            {TABS.map((t) => {
+              const Icon = t.icon;
+              return (
+                <button key={t.id} className={tab === t.id ? "active" : ""} onClick={() => setTab(t.id)}>
+                  <Icon size={13} /> {t.name}
+                </button>
+              );
+            })}
+          </div>
+          <div style={{ display: "flex", gap: 6 }}>
+            <button className="mini" onClick={load} title="刷新"><RefreshCw size={12} /> 刷新</button>
+            <button className="mini" onClick={() => { setAdminToken(""); setAuthed(false); }} title="退出管理"><LogOut size={12} /> 退出</button>
+          </div>
         </div>
-        {err && <div className="hint">{err}</div>}
+        {err && <div className="hint" style={{ color: "#fda4af" }}>{err}</div>}
 
-        {tab === "queue" && queue && (
+        {tab === "queue" && (
           <>
-            <div className="hint">排队 {queue.pending_count} / 上限 {queue.max_queue}</div>
-            {health && (
-              <div className="hint">
-                模型：{health.model_loaded ? "已加载" : "未加载"} · worker：{health.worker_alive ? "存活" : "异常"}
-                {!health.model_loaded && health.model_error ? ` · ${health.model_error.slice(0, 200)}` : ""}
-              </div>
+            <div className="stat-grid">
+              <StatCard icon={<ListOrdered size={18} />} tint="rgba(168,85,247,.18)" value={`${queue?.pending_count ?? "-"} / ${queue?.max_queue ?? "-"}`} label="排队 / 上限" />
+              <StatCard icon={<Cpu size={18} />} tint={queue?.running ? "rgba(251,191,36,.15)" : "rgba(52,211,153,.15)"} value={queue?.running ? "生成中" : "空闲"} label={queue?.running ? (queue.running.title || queue.running.task_id) : "GPU 状态"} />
+              <StatCard icon={<ShieldCheck size={18} />} tint={health?.model_loaded ? "rgba(52,211,153,.15)" : "rgba(251,113,133,.15)"} value={health ? (health.model_loaded ? "已加载" : "未加载") : "-"} label={`模型 · worker ${health?.worker_alive ? "存活" : "异常"}`} />
+            </div>
+            {health && !health.model_loaded && health.model_error && (
+              <div className="health-banner bad"><XCircle size={15} /> {health.model_error.slice(0, 200)}</div>
             )}
-            <h3>Running</h3>
-            {queue.running ? <div className="pre">{queue.running.task_id} · {queue.running.title}</div> : <div className="hint">空闲</div>}
-            <h3>Pending</h3>
-            <table className="tbl">
-              <thead><tr><th>task</th><th>title</th><th>pos</th><th>op</th></tr></thead>
-              <tbody>
-                {queue.pending.map((p) => (
-                  <tr key={p.task_id}>
-                    <td>{p.task_id}</td><td>{p.title}</td><td>{p.queue_position ?? "-"}</td>
-                    <td><button className="mini danger" onClick={() => cancel(p.task_id)}>取消</button></td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+            <h3>⚡ 正在生成</h3>
+            {queue?.running
+              ? <div className="pre" style={{ borderColor: "rgba(251,191,36,.4)" }}>🎵 {queue.running.task_id} · {queue.running.title}<div className="progress indeterminate" style={{ marginTop: 8 }}><div /></div></div>
+              : <EmptyState emoji="☕" title="GPU 空闲" sub="暂无正在生成的任务" />}
+            <h3 style={{ marginTop: 12 }}>📋 等待队列 ({queue?.pending.length ?? 0})</h3>
+            {queue && queue.pending.length > 0 ? (
+              <table className="tbl">
+                <thead><tr><th>task</th><th>title</th><th>pos</th><th>op</th></tr></thead>
+                <tbody>
+                  {queue.pending.map((p) => (
+                    <tr key={p.task_id}>
+                      <td style={{ fontFamily: "monospace" }}>{p.task_id}</td><td>{p.title}</td><td>{p.queue_position ?? "-"}</td>
+                      <td><button className="mini danger" onClick={() => cancel(p.task_id)}>取消</button></td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            ) : <div className="hint">队列为空 🎉</div>}
           </>
         )}
 
-        {tab === "disk" && disk && (
-          <table className="tbl">
-            <tbody>
-              {Object.entries(disk).map(([k, v]) => (
-                <tr key={k}><td>{k}</td><td>{typeof v === "number" && (k.includes("bytes") || k.startsWith("disk")) ? formatBytes(v) : String(v)}</td></tr>
-              ))}
-            </tbody>
-          </table>
+        {tab === "disk" && (
+          disk ? (
+            <>
+              <div className="stat-grid">
+                <StatCard icon={<HardDrive size={18} />} tint="rgba(59,130,246,.15)" value={formatBytes(diskUsed)} label={`已用 / 共 ${formatBytes(diskTotal)}`} />
+                <StatCard icon={<ListOrdered size={18} />} tint="rgba(168,85,247,.15)" value={String(disk.song_count ?? disk.file_count ?? "-")} label="曲目文件数" />
+              </div>
+              <div className="disk-bar"><div style={{ width: `${diskPct}%` }} /></div>
+              <div className="hint">{diskPct}% 已用</div>
+              <table className="tbl" style={{ marginTop: 10 }}>
+                <tbody>
+                  {Object.entries(disk).map(([k, v]) => (
+                    <tr key={k}><td style={{ fontFamily: "monospace", color: "#8b94a7" }}>{k}</td><td>{typeof v === "number" && (k.includes("bytes") || k.startsWith("disk")) ? formatBytes(v) : String(v)}</td></tr>
+                  ))}
+                </tbody>
+              </table>
+            </>
+          ) : <div className="hint">加载中…</div>
         )}
 
-        {tab === "logs" && <div className="logbox" style={{ height: 400 }}>{logs.map((l, i) => <div key={i}>{l}</div>)}</div>}
+        {tab === "logs" && (
+          <div className="logbox" style={{ height: 420 }}>{logs.map((l, i) => <div key={i}>{l}</div>)}</div>
+        )}
 
         {tab === "config" && cfg && (
           <>
-            <div className="pre">{JSON.stringify(cfg, null, 2)}</div>
-            <label className="lbl" htmlFor="cfg-max-queue">max_queue：全局排队上限（1~100）</label>
-            <input id="cfg-max-queue" className="in" inputMode="numeric" value={maxQueue} onChange={(e) => setMaxQueue(e.target.value)} />
-            <label className="lbl" htmlFor="cfg-submit">submit_per_hour：每 IP 每小时提交次数（0=不限）</label>
-            <input id="cfg-submit" className="in" inputMode="numeric" value={submitPerHour} onChange={(e) => setSubmitPerHour(e.target.value)} />
-            <label className="lbl" htmlFor="cfg-per-ip">max_pending_per_ip：匿名每 IP 最大并存任务数（0=不限）</label>
-            <input id="cfg-per-ip" className="in" inputMode="numeric" value={maxPendingPerIp} onChange={(e) => setMaxPendingPerIp(e.target.value)} />
-            <label className="lbl" htmlFor="cfg-per-key">max_pending_per_key：每用户最大并存任务数（0=不限，防一人塞满队列）</label>
-            <input id="cfg-per-key" className="in" inputMode="numeric" value={maxPendingPerKey} onChange={(e) => setMaxPendingPerKey(e.target.value)} />
-            <label className="lbl" htmlFor="cfg-require-key" style={{ display: "flex", alignItems: "center", gap: 8 }}>
-              <input
-                id="cfg-require-key"
-                type="checkbox"
-                checked={requireKey}
-                onChange={(e) => setRequireKey(e.target.checked)}
-              />
+            <div className="health-banner ok">⚡ 热更新立即生效；重启后以环境变量为准。登录用户走 Key 配额 + 每用户并存上限，不再叠加 IP 限制。</div>
+            <div className="row">
+              <div>
+                <label className="lbl" htmlFor="cfg-max-queue"><span>max_queue · 全局排队上限</span></label>
+                <input id="cfg-max-queue" className="in" inputMode="numeric" value={maxQueue} onChange={(e) => setMaxQueue(e.target.value)} style={{ fontFamily: "monospace" }} />
+              </div>
+              <div>
+                <label className="lbl" htmlFor="cfg-submit"><span>submit_per_hour · 每 IP 每小时</span></label>
+                <input id="cfg-submit" className="in" inputMode="numeric" value={submitPerHour} onChange={(e) => setSubmitPerHour(e.target.value)} style={{ fontFamily: "monospace" }} />
+              </div>
+            </div>
+            <div className="row">
+              <div>
+                <label className="lbl" htmlFor="cfg-per-ip"><span>max_pending_per_ip · 匿名并存</span></label>
+                <input id="cfg-per-ip" className="in" inputMode="numeric" value={maxPendingPerIp} onChange={(e) => setMaxPendingPerIp(e.target.value)} style={{ fontFamily: "monospace" }} />
+              </div>
+              <div>
+                <label className="lbl" htmlFor="cfg-per-key"><span>max_pending_per_key · 每用户并存</span></label>
+                <input id="cfg-per-key" className="in" inputMode="numeric" value={maxPendingPerKey} onChange={(e) => setMaxPendingPerKey(e.target.value)} style={{ fontFamily: "monospace" }} />
+              </div>
+            </div>
+            <label className="lbl" htmlFor="cfg-require-key" style={{ display: "flex", alignItems: "center", gap: 8, textTransform: "none", fontSize: 12.5 }}>
+              <input id="cfg-require-key" type="checkbox" checked={requireKey} onChange={(e) => setRequireKey(e.target.checked)} style={{ width: 16, height: 16, accentColor: "#a855f7" }} />
               require_api_key：强制登录后才能生成（防公网滥用）
             </label>
-            <div className="hint">热更新立即生效；重启后以环境变量为准。登录用户走 Key 配额 + 每用户并存上限，不再叠加 IP 限制。</div>
-            <div style={{ marginTop: 8 }}><button className="btn ghost" onClick={saveConfig}>保存</button></div>
+            <div style={{ marginTop: 10, display: "flex", gap: 8 }}>
+              <button className="btn sm" onClick={saveConfig} style={{ width: "auto", padding: "9px 28px" }}>💾 保存配置</button>
+            </div>
+            <details style={{ marginTop: 12 }}>
+              <summary className="hint" style={{ cursor: "pointer" }}>查看服务端原始 JSON</summary>
+              <div className="pre" style={{ marginTop: 6 }}>{JSON.stringify(cfg, null, 2)}</div>
+            </details>
           </>
         )}
 
         {tab === "keys" && (
           <>
-            <h3>新建 Key（明文只显示一次，请立即复制发给用户）</h3>
+            <h3>✨ 新建 Key <span className="hint" style={{ margin: 0 }}>明文只显示一次，请立即复制发给用户</span></h3>
             {createdSecret && (
-              <div className="pre" style={{ borderColor: "#a855f7" }}>
-                新 Key（仅此一次）：{createdSecret}
+              <div className="pre" style={{ borderColor: "#a855f7", fontFamily: "monospace" }}>
+                🎉 新 Key（仅此一次）：{createdSecret}
               </div>
             )}
-            <div className="row" style={{ display: "grid", gridTemplateColumns: "1fr 1fr 2fr auto", gap: 8, alignItems: "end" }}>
+            <div className="row" style={{ gridTemplateColumns: "1fr 1fr 2fr auto", alignItems: "end" }}>
               <div>
                 <label className="lbl" htmlFor="key-name">用户名</label>
                 <input id="key-name" className="in" maxLength={32} placeholder="如 zhangsan" value={newName} onChange={(e) => setNewName(e.target.value)} />
               </div>
               <div>
                 <label className="lbl" htmlFor="key-quota">可生成首数（0=不限）</label>
-                <input id="key-quota" className="in" inputMode="numeric" value={newQuota} onChange={(e) => setNewQuota(e.target.value)} />
+                <input id="key-quota" className="in" inputMode="numeric" value={newQuota} onChange={(e) => setNewQuota(e.target.value)} style={{ fontFamily: "monospace" }} />
               </div>
               <div>
                 <label className="lbl" htmlFor="key-note">备注</label>
                 <input id="key-note" className="in" maxLength={200} placeholder="如 市场部试用" value={newNote} onChange={(e) => setNewNote(e.target.value)} />
               </div>
-              <button className="mini" onClick={createKey}>新建</button>
+              <button className="mini primary" onClick={createKey} style={{ padding: "9px 18px" }}>＋ 新建</button>
             </div>
 
-            <h3 style={{ marginTop: 12 }}>Key 列表 ({keys.length})</h3>
-            <table className="tbl">
-              <thead><tr><th>用户</th><th>前缀</th><th>已用/配额</th><th>状态</th><th>注册时间</th><th>op</th></tr></thead>
-              <tbody>
-                {keys.map((k) => (
-                  <tr key={k.id} style={selId === k.id ? { background: "rgba(109,40,217,.15)" } : undefined}>
-                    <td>{k.name}</td>
-                    <td style={{ fontFamily: "monospace" }}>{k.key_prefix}…</td>
-                    <td>{k.used_count}/{k.quota_total <= 0 ? "不限" : k.quota_total}</td>
-                    <td>{k.enabled !== 0 ? "启用" : "停用"}</td>
-                    <td>{k.created_at}</td>
-                    <td style={{ whiteSpace: "nowrap" }}>
-                      <button className="mini" onClick={() => selectKey(k)}>管理</button>{" "}
-                      <button className="mini" onClick={() => resetKey(k.id, k.name)}>换Key</button>{" "}
-                      <button className="mini danger" onClick={() => delKey(k.id, k.name)}>删</button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-            {keys.length === 0 && <div className="hint">还没有 Key，先在上面新建一个。</div>}
+            <h3 style={{ marginTop: 14 }}>🔑 Key 列表 ({keys.length})</h3>
+            {keys.length > 0 ? (
+              <table className="tbl">
+                <thead><tr><th>用户</th><th>前缀</th><th>已用/配额</th><th>状态</th><th>注册时间</th><th>op</th></tr></thead>
+                <tbody>
+                  {keys.map((k) => (
+                    <tr key={k.id} style={selId === k.id ? { background: "rgba(109,40,217,.15)" } : undefined}>
+                      <td style={{ fontWeight: 700, color: "#fff" }}>{k.name}</td>
+                      <td style={{ fontFamily: "monospace" }}>{k.key_prefix}…</td>
+                      <td>{k.used_count}/{k.quota_total <= 0 ? "不限" : k.quota_total}</td>
+                      <td>{k.enabled !== 0 ? "✅ 启用" : "⛔ 停用"}</td>
+                      <td style={{ fontSize: 11, color: "#8b94a7" }}>{k.created_at}</td>
+                      <td style={{ whiteSpace: "nowrap" }}>
+                        <button className="mini" onClick={() => selectKey(k)}>管理</button>{" "}
+                        <button className="mini" onClick={() => resetKey(k.id, k.name)}>换Key</button>{" "}
+                        <button className="mini danger" onClick={() => delKey(k.id, k.name)}>删</button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            ) : <EmptyState emoji="🔑" title="还没有 Key" sub="在上面新建第一个用户 Key" />}
 
             {selId !== null && (
-              <div style={{ marginTop: 12 }}>
-                <h3>编辑配额 / 启停</h3>
-                <div className="row" style={{ display: "grid", gridTemplateColumns: "1fr 1fr 2fr auto", gap: 8, alignItems: "end" }}>
+              <div style={{ marginTop: 12, background: "rgba(2,6,23,.5)", border: "1px solid var(--line2)", borderRadius: 14, padding: 12 }}>
+                <h3>⚙️ 编辑配额 / 启停</h3>
+                <div className="row" style={{ gridTemplateColumns: "1fr 1fr 2fr auto", alignItems: "end" }}>
                   <div>
                     <label className="lbl" htmlFor="key-edit-quota">配额（0=不限）</label>
-                    <input id="key-edit-quota" className="in" inputMode="numeric" value={editQuota} onChange={(e) => setEditQuota(e.target.value)} />
+                    <input id="key-edit-quota" className="in" inputMode="numeric" value={editQuota} onChange={(e) => setEditQuota(e.target.value)} style={{ fontFamily: "monospace" }} />
                   </div>
                   <div>
-                    <label className="lbl" htmlFor="key-edit-enabled" style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                      <input id="key-edit-enabled" type="checkbox" checked={editEnabled} onChange={(e) => setEditEnabled(e.target.checked)} />
+                    <label className="lbl" htmlFor="key-edit-enabled" style={{ display: "flex", alignItems: "center", gap: 8, textTransform: "none" }}>
+                      <input id="key-edit-enabled" type="checkbox" checked={editEnabled} onChange={(e) => setEditEnabled(e.target.checked)} style={{ width: 16, height: 16, accentColor: "#a855f7" }} />
                       启用
                     </label>
                   </div>
@@ -405,16 +483,16 @@ export default function Admin() {
                     <label className="lbl" htmlFor="key-edit-note">备注</label>
                     <input id="key-edit-note" className="in" maxLength={200} value={editNote} onChange={(e) => setEditNote(e.target.value)} />
                   </div>
-                  <button className="mini" onClick={saveKey}>保存</button>
+                  <button className="mini primary" onClick={saveKey} style={{ padding: "9px 18px" }}>保存</button>
                 </div>
-                <h3 style={{ marginTop: 12 }}>该用户的歌{keyHist ? ` (${keyHist.total})` : ""}</h3>
+                <h3 style={{ marginTop: 12 }}>🎵 该用户的歌{keyHist ? ` (${keyHist.total})` : ""}</h3>
                 {keyHist ? (
                   keyHist.items.length === 0 ? <div className="hint">还没有作品。</div> : (
                     <table className="tbl">
                       <thead><tr><th>task</th><th>title</th><th>time</th></tr></thead>
                       <tbody>
                         {keyHist.items.map((h) => (
-                          <tr key={h.task_id}><td style={{ fontFamily: "monospace" }}>{h.task_id}</td><td>{h.title}</td><td>{h.created_at}</td></tr>
+                          <tr key={h.task_id}><td style={{ fontFamily: "monospace" }}>{h.task_id}</td><td>{h.title}</td><td style={{ fontSize: 11, color: "#8b94a7" }}>{h.created_at}</td></tr>
                         ))}
                       </tbody>
                     </table>
