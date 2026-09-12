@@ -21,6 +21,8 @@ cd web && npm install && npm run dev    # 前端 dev：http://127.0.0.1:5173
 
 > 必须 `--workers 1`：GPU 队列在进程内存中。
 
+> YuE2 安装（`yue2` / `torch` 等重依赖默认不装）：见模型页说明 https://huggingface.co/m-a-p/YuE2-3B ，按官方指引装好后再启动后端，否则服务只能启动、`/healthz` 报 `degraded`，生成报 503。
+
 ## 部署（docker compose）
 
 架构：`api`（GPU 推理，`--workers 1` 单副本）+ `web`（nginx 静态，反代 `/api /audio /healthz`）。
