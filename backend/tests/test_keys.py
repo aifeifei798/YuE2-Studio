@@ -241,6 +241,56 @@ def test_reset_key(client):
     assert client.post(f"/api/admin/keys/{kid}/reset").status_code == 401
 
 
+def test_user_can_delete_own_song(client):
+    """用户删自己的歌；别人的删不动（403），匿名删不动（401）。"""
+    a = _make_key(client, "ivan", quota=10)
+    b = _make_key(client, "judy", quota=10)
+    ha, hb = _kh("ivan", a["api_key"]), _kh("judy", b["api_key"])
+    payload = {"title": "我的歌", "style": "s", "lyrics": "l", "cot": "full", "seed": 1}
+
+    tid = client.post("/api/generate", headers=ha, json=payload).json()["task_id"]
+    assert wait_status(client, tid)["status"] == "succeeded"
+
+    # 别人的歌：403；匿名：401；非法 id：400
+    assert client.delete(f"/api/auth/history/{tid}", headers=hb).status_code == 403
+    assert client.delete(f"/api/auth/history/{tid}").status_code == 401
+    assert client.delete("/api/auth/history/evil-id", headers=ha).status_code == 400
+
+    # 自己的歌：删掉后任务/音频/个人历史都没了
+    assert client.delete(f"/api/auth/history/{tid}", headers=ha).json()["status"] == "deleted"
+    assert client.get(f"/api/tasks/{tid}").status_code == 404
+    assert client.get(f"/audio/{tid}.flac").status_code == 404
+    assert client.get("/api/auth/history", headers=ha, params={"limit": 20}).json()["total"] == 0
+    # 再删一次：404
+    assert client.delete(f"/api/auth/history/{tid}", headers=ha).status_code == 404
+
+
+def test_user_cannot_delete_own_running_song(client, monkeypatch):
+    """自己的运行中任务也删不动（409），完成后可删。"""
+    gate = threading.Event()
+    real = queue_mod.run_generation
+
+    def blocking(task):
+        gate.wait(timeout=15)
+        return real(task)
+
+    monkeypatch.setattr(queue_mod, "run_generation", blocking)
+    created = _make_key(client, "ken", quota=10)
+    h = _kh("ken", created["api_key"])
+    payload = {"title": "跑着呢", "style": "s", "lyrics": "l", "cot": "full", "seed": 1}
+
+    tid = client.post("/api/generate", headers=h, json=payload).json()["task_id"]
+    try:
+        deadline = time.time() + 10
+        while client.get(f"/api/tasks/{tid}").json()["status"] != "running" and time.time() < deadline:
+            time.sleep(0.1)
+        assert client.delete(f"/api/auth/history/{tid}", headers=h).status_code == 409
+    finally:
+        gate.set()
+    assert wait_status(client, tid)["status"] == "succeeded"
+    assert client.delete(f"/api/auth/history/{tid}", headers=h).json()["status"] == "deleted"
+
+
 def test_owner_column_migrates_on_old_db(tmp_path):
     import sqlite3
 

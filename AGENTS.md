@@ -19,7 +19,7 @@ FastAPI (GPU) + Vite+React 前后端分离作曲工作台。单卡串行生成�
 - `outputs/audio/*.flac`、`outputs/artifacts/<id>/`、`outputs/history.db`（SQLite；老 `history.json` 首次启动自动导入并改名 `.migrated`）。compose 用命名卷 `outputs`。
 - `task_id` 恒为 8 位 hex；`audio_url` 恒为同源 `/audio/<id>.flac`（前后端都有格式校验，改动时保持）。
 - 取消任务只对排队中有效，运行中返回 409（GPU 不可抢占）。
-- 删除歌曲只有管理端（`DELETE /api/admin/history/{task_id}`，Studio 页有 admin token 才显示删除按钮；运行中同样 409，防 worker 复活）；公开 `/healthz` 无敏感字段，模型错误原文只在 `GET /api/admin/health`。
+- 删除歌曲：管理端可删任意（`DELETE /api/admin/history/{task_id}`，Studio 页有 admin token 才显示删除按钮）；用户可删归属自己的（`DELETE /api/auth/history/{task_id}`，自己的歌显示删除按钮，别人的 403）；运行中同样 409，防 worker 复活；公开 `/healthz` 无敏感字段，模型错误原文只在 `GET /api/admin/health`。
 - `POST /api/generate` 按 IP 限流（`YUE2_SUBMIT_PER_HOUR`，nginx 透传 `X-Forwarded-For`，配额/IP 挡掉的不消耗小时次数）；匿名另有每 IP 并存任务上限 `YUE2_MAX_PENDING_PER_IP`（pending+running，登录用户走 Key 配额 + `YUE2_MAX_PENDING_PER_KEY` 并存上限，不再叠加 IP 限制）；四者 + `REQUIRE_API_KEY` 都可在管理页 config 热更新。
 - 用户体系是 API Key（`api_keys` 表，只存 SHA256，明文仅创建时返回一次）：凭证格式 `X-API-Key: 用户名:secret`（用户名禁 `:`/空白）；配额按**成功生成数**计（失败/取消不计），`used + 在途 >= quota` 即 429（`/me` 的 `quota_left` 已扣在途）；默认 `REQUIRE_API_KEY=true` 强制登录，匿名 401；换 Key 走 `POST /api/admin/keys/{id}/reset`（旧 Key 立即失效，配额/历史保留）；歌曲归属记 `records.owner`，删 Key 不删歌。
 - 排队快照 `outputs/pending.json`，重启自动恢复 pending 任务。

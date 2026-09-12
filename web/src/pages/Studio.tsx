@@ -199,11 +199,22 @@ export default function Studio(props: { serverState: string; refreshServer: () =
     pushLog(`正在播放: 《${item.title}》`);
   }
 
+  /** 管理员删任意；登录用户只能删归属自己的（匿名旧歌谁都不显示按钮）。 */
+  function canDelete(item: HistoryRecord) {
+    if (isAdmin) return true;
+    return user !== null && !!item.owner && item.owner === user.name;
+  }
+
   async function removeItem(id: string) {
     if (!TASK_ID_RE.test(id)) return;
     if (!(await modal.confirm("确定删除该曲目吗？音频文件也会一起删除。"))) return;
     try {
-      await apiFetch(`/api/admin/history/${id}`, { method: "DELETE" }, true);
+      if (isAdmin) {
+        await apiFetch(`/api/admin/history/${id}`, { method: "DELETE" }, true);
+      } else {
+        // 普通用户走归属接口：只能删自己的歌
+        await apiFetch(`/api/auth/history/${id}`, { method: "DELETE" }, false, true);
+      }
       // 删掉本页最后一条且不在首页时退一页，否则重载本页
       if (history.length <= 1 && page > 0) setPage(page - 1);
       else loadHistory();
@@ -413,7 +424,7 @@ export default function Studio(props: { serverState: string; refreshServer: () =
                 <div className="t">{item.title}</div>
                 <div className="s">Seed: {item.seed}</div>
               </div>
-              {isAdmin && <button className="mini danger" onClick={(e) => { e.stopPropagation(); removeItem(item.task_id); }}>删</button>}
+              {canDelete(item) && <button className="mini danger" onClick={(e) => { e.stopPropagation(); removeItem(item.task_id); }}>删</button>}
             </div>
           ))}
         </div>

@@ -4,14 +4,19 @@
 """
 from __future__ import annotations
 
+import logging
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 
 from ..core import store
+from ..core.store import TASK_ID_RE
 from ..models.schemas import KeyLogin
+from ..services.inference import safe_delete_task_files
 
 router = APIRouter()
+
+log = logging.getLogger("yue2-studio")
 
 
 def parse_key_header(request: Request) -> Optional[tuple[str, str]]:
@@ -81,3 +86,25 @@ def my_history(
 ):
     total, items = store.query_history(q.strip(), limit, offset, owner=key["name"])
     return {"total": total, "offset": offset, "limit": limit, "items": items}
+
+
+@router.delete("/api/auth/history/{task_id}")
+def delete_my_song(task_id: str, key: dict = Depends(require_key)):
+    """用户删自己的歌（只能删归属自己的；运行中 409，GPU 不可抢占）。"""
+    if not TASK_ID_RE.match(task_id):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="非法 task_id")
+    task = store.tasks.get(task_id)
+    rec = None if task is not None else store.get_history_record(task_id)
+    owner = (task or {}).get("owner") if task is not None else (rec or {}).get("owner")
+    if task is None and rec is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="记录不存在")
+    if owner != key["name"]:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="只能删除自己的歌曲")
+    if task is not None and task.get("status") == "running":
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="任务正在 GPU 上执行，无法删除（请等待完成后再删）")
+    store.remove_history_record(task_id)
+    store.tasks.pop(task_id, None)
+    safe_delete_task_files(task_id)
+    store.save_pending_snapshot()
+    log.info("🗑 用户[%s]删除自己的歌 [%s]", key["name"], task_id)
+    return {"status": "deleted", "task_id": task_id}

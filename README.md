@@ -121,6 +121,7 @@ docker compose pull && docker compose up -d   # 注意：不要再加 --build
 | GET | `/api/admin/keys/{id}/history` | 该 Key 的歌 |
 | POST | `/api/auth/login` | 用户登录 `{username, key}`，返回配额视图 |
 | GET | `/api/auth/me`、`GET /api/auth/history` | 自查配额 / 只看我的歌（请求头 `X-API-Key: 用户名:secret`） |
+| DELETE | `/api/auth/history/{id}` | 用户删自己的歌（别人的 403，运行中 409） |
 
 `POST /api/generate`：`title(≤100) / style(1~2000) / lyrics(1~10000) / cot(full|none) / seed(0~2^31-1, null=随机)`（上限取后端配置，前端经 `/api/config` 动态取，不再硬编码）。
 配额（429 时看返回文案区分）：全局排队上限 `YUE2_MAX_QUEUE`；每 IP 每小时提交数 `YUE2_SUBMIT_PER_HOUR`（0=不限，配额/IP 挡掉的不计数）；
