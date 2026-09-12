@@ -33,19 +33,17 @@ log = logging.getLogger("yue2-studio")
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     s = get_settings()
-    # 日志：控制台 + 内存环（供管理页拉取）；复用已存在的 handler，
+    # 日志：控制台 + 内存环（供管理页拉取）；只挂 yue2-studio，不挂 root，
+    # 否则 uvicorn access log 会冲掉 500 条业务日志；
     # lifespan 多次执行（如测试）也不得重复挂载，否则日志翻倍
-    root_logger = logging.getLogger()
-    handler = next((h for h in root_logger.handlers if isinstance(h, RingBufferHandler)), None)
-    if handler is None:
-        handler = next(
-            (h for h in logging.getLogger("yue2-studio").handlers if isinstance(h, RingBufferHandler)),
-            None,
-        )
+    studio_logger = logging.getLogger("yue2-studio")
+    handler = next((h for h in studio_logger.handlers if isinstance(h, RingBufferHandler)), None)
     if handler is None:
         handler = RingBufferHandler()
         handler.setFormatter(logging.Formatter("%(asctime)s | %(levelname)-7s | %(message)s"))
-        root_logger.addHandler(handler)
+        # 只收本应用日志，不过滤掉 uvicorn 也行但会淹没管理页
+        handler.addFilter(lambda r: r.name == "yue2-studio" or r.name.startswith("yue2-studio."))
+        studio_logger.addHandler(handler)
     # 显式定级：basicConfig 在 root 已有 handler 时是空操作（如 pytest/uvicorn 接管），
     # 不显式 setLevel 会导致 INFO 日志到不了内存环
     logging.getLogger("yue2-studio").setLevel(getattr(logging, s.log_level, logging.INFO))
@@ -83,8 +81,8 @@ def create_app() -> FastAPI:
         CORSMiddleware,
         allow_origins=s.cors_origins,
         allow_credentials=s.allow_credentials,
-        allow_methods=["GET", "POST", "PUT", "DELETE"],
-        allow_headers=["Content-Type", "Authorization", "X-Admin-Token"],
+        allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE"],
+        allow_headers=["Content-Type", "Authorization", "X-Admin-Token", "X-API-Key"],
     )
     app.include_router(public_router.router)
     app.include_router(auth_router.router)
@@ -107,7 +105,8 @@ def create_app() -> FastAPI:
     def read_root():
         if dist_index.exists():
             return FileResponse(str(dist_index))
-        raise HTTPException(status_code=500, detail="前端缺失：请先在 web/ 执行 npm run build")
+        # 分离部署的 api 容器本就没有前端：404 + 明确提示，别用 500 误触发监控
+        raise HTTPException(status_code=404, detail="前端缺失：api 容器不内置前端（请访问 web 服务）；all-in-one 请先在 web/ 执行 npm run build")
 
     return app
 

@@ -160,6 +160,10 @@ export default function Admin() {
       await modal.alert("用户名不能为空");
       return;
     }
+    if (name.includes(":") || /\s/.test(name)) {
+      await modal.alert("用户名不能含冒号或空白（鉴权格式为 用户名:Key）");
+      return;
+    }
     if (!Number.isInteger(quota) || quota < 0 || quota > 100000) {
       await modal.alert("配额必须是不超过 100000 的整数（0 表示不限）");
       return;

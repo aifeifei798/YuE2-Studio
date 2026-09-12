@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import logging
 import shutil
+import time
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -18,6 +19,10 @@ from .public import public_task_view
 log = logging.getLogger("yue2-studio")
 
 router = APIRouter(prefix="/api/admin", dependencies=[Depends(require_admin)])
+
+# disk 统计要全量扫文件，歌多了很慢：缓存 10s
+_disk_cache: dict = {"ts": 0.0, "data": None}
+_DISK_CACHE_TTL = 10.0
 
 
 @router.get("/health")
@@ -78,6 +83,9 @@ def admin_cancel_task(task_id: str):
 def admin_delete_history(task_id: str):
     if not TASK_ID_RE.match(task_id):
         raise HTTPException(status_code=400, detail="非法 task_id")
+    task = store.tasks.get(task_id)
+    if task is not None and task.get("status") == "running":
+        raise HTTPException(status_code=409, detail="任务正在 GPU 上执行，无法删除（请等待完成后再删）")
     removed = store.remove_history_record(task_id)
     store.tasks.pop(task_id, None)
     safe_delete_task_files(task_id)
@@ -90,6 +98,9 @@ def admin_delete_history(task_id: str):
 
 @router.get("/disk")
 def admin_disk():
+    now = time.monotonic()
+    if _disk_cache["data"] is not None and now - _disk_cache["ts"] < _DISK_CACHE_TTL:
+        return _disk_cache["data"]
     s = get_settings()
     audio_count = len(list(s.audio_dir.glob("*.flac"))) if s.audio_dir.exists() else 0
     info = {
@@ -105,6 +116,8 @@ def admin_disk():
         info.update({"disk_total": du.total, "disk_used": du.used, "disk_free": du.free})
     except OSError:
         pass
+    _disk_cache["data"] = info
+    _disk_cache["ts"] = now
     return info
 
 

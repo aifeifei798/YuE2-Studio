@@ -68,9 +68,9 @@ docker compose down                   # 停服（outputs 卷保留，音频/历�
 
 ### 公网部署追加项
 
-1. `.env` 里 `CORS_ORIGINS` 改为你的真实域名（逗号分隔），不要用 `*`。
+1. `.env` 里 `CORS_ORIGINS` 改为你的真实域名（逗号分隔），不要用 `*`。直连 api 调试时浏览器预检需要 `PATCH` + `X-API-Key` 头（已在 CORS 放行）。
 2. 前面再架一层反代（Caddy/Nginx/云 LB）做 HTTPS，把 443 转到本机 80；不要把 api 的 8000 直接暴露到公网。
-3. 需要账号体系再往下做（当前只有共用的 `ADMIN_TOKEN`，见管理页说明）。
+3. 公网建议打开 `REQUIRE_API_KEY`（或管理页勾选）：匿名一律 401，必须登录才能生成。登录用户走 Key 配额，不再受每 IP 并存数限制。
 
 ### 单镜像（单机最省，不用 compose）
 
@@ -99,9 +99,10 @@ docker compose pull && docker compose up -d   # 注意：不要再加 --build
 
 | 方法 | 路径 | 说明 |
 |------|------|------|
-| GET | `/`、`/#/admin` | 新版前端（`web/dist`，缺失则 500 提示先构建） |
+| GET | `/`、`/#/admin` | 新版前端（`web/dist`，缺失则 404 提示先构建 / 访问 web 服务） |
 | GET | `/healthz` | 公开健康（`model_loaded / worker_alive / queue_pending / history_count`，无敏感明细） |
-| POST | `/api/generate` | 入队 202 `{task_id, queue_position, seed}`，轮询任务；每 IP 每小时限 `YUE2_SUBMIT_PER_HOUR` 次 |
+| POST | `/api/generate` | 入队 202 `{task_id, queue_position, seed}`，轮询任务；每 IP 每小时限 `YUE2_SUBMIT_PER_HOUR` 次（配额/IP 挡掉的不计数） |
+| GET | `/api/config` | 公开配置（长度上限 `max_title/style/lyrics_len`、`require_api_key`，前端动态取） |
 | GET | `/api/tasks/{id}` | `pending / running / succeeded(+record) / failed(+error)` |
 | GET | `/api/history?limit=&offset=&q=` | 无 `limit` 兼容老数组；有则 `{total, items}` |
 | GET | `/audio/{id}.flac` | 仅音频子目录，`history.json` 永不静态暴露 |
@@ -109,7 +110,7 @@ docker compose pull && docker compose up -d   # 注意：不要再加 --build
 | GET | `/api/admin/queue` | 排队+运行中（需管理鉴权） |
 | POST | `/api/admin/tasks/{id}/cancel` | 取消排队中任务（运行中 409） |
 | GET | `/api/admin/tasks?status=&limit=` | 全量任务表 |
-| DELETE | `/api/admin/history/{id}` | 管理删档（含文件） |
+| DELETE | `/api/admin/history/{id}` | 管理删档（含文件；运行中 409，防 worker 复活） |
 | GET | `/api/admin/disk` | 音频数/字节/磁盘余量/排队 |
 | GET | `/api/admin/logs?tail=` | 内存日志环（500 条） |
 | GET/PUT | `/api/admin/config` | 查看/热更新 `max_queue, submit_per_hour, max_pending_per_ip, require_api_key, log_level`（重启后以 env 为准） |
@@ -120,17 +121,17 @@ docker compose pull && docker compose up -d   # 注意：不要再加 --build
 | POST | `/api/auth/login` | 用户登录 `{username, key}`，返回配额视图 |
 | GET | `/api/auth/me`、`GET /api/auth/history` | 自查配额 / 只看我的歌（请求头 `X-API-Key: 用户名:secret`） |
 
-`POST /api/generate`：`title(≤100) / style(1~2000) / lyrics(1~10000) / cot(full|none) / seed(0~2^31-1, null=随机)`。
-配额（429 时看返回文案区分）：全局排队上限 `YUE2_MAX_QUEUE`；每 IP 每小时提交数 `YUE2_SUBMIT_PER_HOUR`（0=不限）；
-每 IP 并存任务数 `YUE2_MAX_PENDING_PER_IP`（pending+running，0=不限）；Key 配额（成功生成的首数）。
+`POST /api/generate`：`title(≤100) / style(1~2000) / lyrics(1~10000) / cot(full|none) / seed(0~2^31-1, null=随机)`（上限取后端配置，前端经 `/api/config` 动态取，不再硬编码）。
+配额（429 时看返回文案区分）：全局排队上限 `YUE2_MAX_QUEUE`；每 IP 每小时提交数 `YUE2_SUBMIT_PER_HOUR`（0=不限，配额/IP 挡掉的不计数）；
+匿名每 IP 并存任务数 `YUE2_MAX_PENDING_PER_IP`（pending+running，0=不限；登录用户走 Key 配额，不再叠加 IP 限制）；Key 配额（成功生成的首数，`/me` 的 `quota_left` 已扣在途）。
 前三者 + `REQUIRE_API_KEY` 都可在管理页 config 标签热更新。
 
 ## 用户体系（API Key）
 
-无账号密码体系，凭“用户名 + Key”登录（Studio 页历史列表上方）：
+无账号密码体系，凭“用户名 + Key”登录（Studio 页历史列表上方；用户名禁 `:`/空白）：
 
 1. 管理员在 `#/admin` → keys 标签新建 Key：填用户名、配额（可生成首数，0=不限）、备注，明文 Key 只显示一次，立即复制发给用户。
-2. 用户登录后：生成自动记到名下并扣配额（**只有成功生成的才计**，失败/取消不计），历史列表可切“只看我的”，配额条实时显示已用/总量。
+2. 用户登录后：生成自动记到名下并扣配额（**只有成功生成的才计**，失败/取消不计；在途占用配额，`/me` 的 `quota_left` 已扣在途），历史列表可切“只看我的”，配额条实时显示已用/总量。
 3. 管理员可随时改配额、停用、删除 Key，看每个 Key 的注册时间、最后使用时间、做了几首歌、歌曲列表。删 Key 不删歌（归属名保留）。
 4. 库里只存 Key 的 SHA256 哈希，明文无法找回；用户丢 Key 只能删了重建。
 5. 公网建议打开 `REQUIRE_API_KEY`（或管理页勾选）：匿名一律 401，必须登录才能生成。

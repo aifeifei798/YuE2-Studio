@@ -10,25 +10,25 @@ FastAPI (GPU) + Vite+React 前后端分离作曲工作台。单卡串行生成�
 - 配置全走环境变量（见 `.env.example`），`get_settings()` 带 `lru_cache`——测试里改 env 后必须调 `reload_settings()`。
 - 模型导入是延迟的（`services/inference.py` 内 import yue2）：无 GPU/无依赖时服务照常启动，`/healthz` 报 `degraded`，`POST /api/generate` 报 503。
 - 管理口 `/api/admin/*` 统一 `require_admin`：`ADMIN_TOKEN` 为空 = 全部 403；鉴权走 `Authorization: Bearer` 或 `X-Admin-Token`。
-- 前端是 hash 路由（`#/` 创作，`#/admin` 管理），无 react-router。all-in-one 镜像里后端 serve `web/dist`；**改完前端必须在 `web/` 跑 `npm run build`，否则后端 `/` 报 500**。dev 用 `npm run dev`（5173，经 vite proxy 反代 127.0.0.1:8000）。
-- compose 下浏览器只访问 `web:80`（nginx 反代 `/api /audio /healthz` 到 api）；api 默认不 publish 端口。
-- 只挂载了 `outputs/audio/` 做静态 serving——永远不要把整个 `outputs/` 挂出去，`history.json` 会泄露。
+- 前端是 hash 路由（`#/` 创作，`#/admin` 管理），无 react-router。all-in-one 镜像里后端 serve `web/dist`；**改完前端必须在 `web/` 跑 `npm run build`，否则后端 `/` 报 404**。dev 用 `npm run dev`（5173，经 vite proxy 反代 127.0.0.1:8000）。
+- compose 下浏览器只访问 `web:80`（nginx 反代 `/api /audio /healthz` 到 api，透传 `X-Forwarded-For` 供限流）；api 默认不 publish 端口。分离部署的 api 容器不内置前端，`GET /` 固定 404 + 提示（不是 500）。
+- 只暴露了 `outputs/audio/` 做静态 serving——永远不要把整个 `outputs/` 挂出去，`history.db / pending.json` 会泄露。
 
 ## 数据与约束
 
 - `outputs/audio/*.flac`、`outputs/artifacts/<id>/`、`outputs/history.db`（SQLite；老 `history.json` 首次启动自动导入并改名 `.migrated`）。compose 用命名卷 `outputs`。
 - `task_id` 恒为 8 位 hex；`audio_url` 恒为同源 `/audio/<id>.flac`（前后端都有格式校验，改动时保持）。
 - 取消任务只对排队中有效，运行中返回 409（GPU 不可抢占）。
-- 删除歌曲只有管理端（`DELETE /api/admin/history`，Studio 页登录后才显示按钮）；公开 `/healthz` 无敏感字段，模型错误原文只在 `GET /api/admin/health`。
-- `POST /api/generate` 按 IP 限流（`YUE2_SUBMIT_PER_HOUR`，nginx 透传 `X-Forwarded-For`）；另有每 IP 并存任务上限 `YUE2_MAX_PENDING_PER_IP`（pending+running，无账号体系下 IP 即用户）；两者都可在管理页 config 热更新。
-- 用户体系是 API Key（`api_keys` 表，只存 SHA256，明文仅创建时返回一次）：凭证格式 `X-API-Key: 用户名:secret`；配额按**成功生成数**计（失败不计），`used + 在途 >= quota` 即 429；`REQUIRE_API_KEY=true` 时匿名 401；歌曲归属记 `records.owner`，删 Key 不删歌。
+- 删除歌曲只有管理端（`DELETE /api/admin/history/{task_id}`，Studio 页有 admin token 才显示删除按钮；运行中同样 409，防 worker 复活）；公开 `/healthz` 无敏感字段，模型错误原文只在 `GET /api/admin/health`。
+- `POST /api/generate` 按 IP 限流（`YUE2_SUBMIT_PER_HOUR`，nginx 透传 `X-Forwarded-For`，配额/IP 挡掉的不消耗小时次数）；匿名另有每 IP 并存任务上限 `YUE2_MAX_PENDING_PER_IP`（pending+running，登录用户走 Key 配额不再叠加 IP 限制）；三者都可在管理页 config 热更新。
+- 用户体系是 API Key（`api_keys` 表，只存 SHA256，明文仅创建时返回一次）：凭证格式 `X-API-Key: 用户名:secret`（用户名禁 `:`/空白）；配额按**成功生成数**计（失败/取消不计），`used + 在途 >= quota` 即 429（`/me` 的 `quota_left` 已扣在途）；`REQUIRE_API_KEY=true` 时匿名 401；歌曲归属记 `records.owner`，删 Key 不删歌。
 - 排队快照 `outputs/pending.json`，重启自动恢复 pending 任务。
 
 ## 验证（pytest + tsc + compose config，CI 同款）
 
 ```bash
 python -m pytest backend/tests -q   # 需先 pip install -r requirements-dev.txt；stub yue2，无需 GPU
-cd web && npm run build             # 含 tsc 类型检查；改完前端必跑，否则后端 / 报 500
+cd web && npm run build             # 含 tsc 类型检查；改完前端必跑，否则后端 / 报 404
 docker compose config               # 改编排后必跑；无 .env 也能过（required: false）
 ```
 

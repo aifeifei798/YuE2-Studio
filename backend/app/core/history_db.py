@@ -98,6 +98,10 @@ def _ensure_schema(db: Path) -> None:
             cols = {r[1] for r in con.execute("PRAGMA table_info(records)").fetchall()}
             if "owner" not in cols:
                 con.execute("ALTER TABLE records ADD COLUMN owner TEXT DEFAULT NULL")
+            # 查询加速：个人历史按 owner 查，搜索按 title/seed
+            con.execute("CREATE INDEX IF NOT EXISTS idx_records_owner ON records(owner)")
+            con.execute("CREATE INDEX IF NOT EXISTS idx_records_title ON records(title)")
+            con.execute("CREATE INDEX IF NOT EXISTS idx_keys_name ON api_keys(name)")
     finally:
         con.close()
 

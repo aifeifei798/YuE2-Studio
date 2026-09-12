@@ -1,8 +1,8 @@
 # 分离部署：node 构建 → nginx 静态（compose 里的 web 服务，开箱即用，无需本地先 build）
 FROM node:20-slim AS webbuild
 WORKDIR /build
-COPY package.json ./
-RUN npm install --no-audit --no-fund
+COPY package.json package-lock.json ./
+RUN npm ci --no-audit --no-fund
 COPY . ./
 RUN npm run build
 

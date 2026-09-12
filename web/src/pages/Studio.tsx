@@ -7,13 +7,16 @@ import {
   isSafeAudioUrl,
   setUserCreds,
   type HistoryRecord,
+  type PublicConfig,
   type QuotaInfo,
 } from "../lib/api";
 import { useModal } from "../components/Modal";
 
 const DRAFT_KEY = "yue2-draft-v1";
 const TASK_ID_RE = /^[0-9a-f]{8}$/;
+const SEED_RE = /^\d+$/;
 const PAGE_SIZE = 20;
+const POLL_TIMEOUT_MS = 60 * 60 * 1000;
 const PRESET = {
   title: "今晚不眠",
   style: "City Pop, upbeat, danceable, groovy bass\nelectric guitar, synth, energetic, joyful\nneon city night, emotional male vocal",
@@ -41,10 +44,31 @@ export default function Studio(props: { serverState: string; refreshServer: () =
   const [loginKey, setLoginKey] = useState("");
   const [mineOnly, setMineOnly] = useState(false);
   const modal = useModal();
-  // 删除是管理操作：无 admin token 时不展示删除按钮
-  const [isAdmin] = useState(() => getAdminToken() !== "");
+  // 删除是管理操作：实时跟随 admin token（同页登录管理后无需刷新即显示）
+  const [isAdmin, setIsAdmin] = useState(() => getAdminToken() !== "");
+  useEffect(() => {
+    const sync = () => setIsAdmin(getAdminToken() !== "");
+    window.addEventListener("focus", sync);
+    window.addEventListener("hashchange", sync);
+    window.addEventListener("storage", sync);
+    sync();
+    return () => {
+      window.removeEventListener("focus", sync);
+      window.removeEventListener("hashchange", sync);
+      window.removeEventListener("storage", sync);
+    };
+  }, []);
+  // 长度上限走后端 /api/config，前端不再硬编码（兜底值为当前默认）
+  const [limits, setLimits] = useState({ title: 100, style: 2000, lyrics: 10000 });
+  useEffect(() => {
+    apiFetch<PublicConfig>("/api/config")
+      .then((c) => setLimits({ title: c.max_title_len, style: c.max_style_len, lyrics: c.max_lyrics_len }))
+      .catch(() => undefined);
+  }, []);
   const audioRef = useRef<HTMLAudioElement>(null);
-  const pollRef = useRef<number | null>(null);
+  // 多任务轮询：一次提交只加一个 id，单 interval 轮询全部在途任务
+  const pollingRef = useRef<Map<string, { seed: number; started: number }>>(new Map());
+  const pollTimerRef = useRef<number | null>(null);
 
   const pushLog = useCallback((msg: string) => {
     setLogs((prev) => [...prev.slice(-199), `[${new Date().toLocaleTimeString()}] ${msg}`]);
@@ -82,8 +106,8 @@ export default function Studio(props: { serverState: string; refreshServer: () =
         if (d.seed !== undefined) setSeed(String(d.seed ?? ""));
       }
     } catch { /* ignore */ }
-    loadHistory();
-  }, [loadHistory]);
+    // 历史由下面的 debounce effect 加载，这里只恢复草稿，避免首屏 double-fetch
+  }, []);
 
   useEffect(() => {
     const t = setTimeout(() => {
@@ -109,7 +133,7 @@ export default function Studio(props: { serverState: string; refreshServer: () =
       });
   }, []);
 
-  useEffect(() => () => { if (pollRef.current) window.clearInterval(pollRef.current); }, []);
+  useEffect(() => () => { if (pollTimerRef.current) window.clearInterval(pollTimerRef.current); }, []);
 
   async function refreshQuota() {
     if (!getUserCreds()) return;
@@ -189,45 +213,73 @@ export default function Studio(props: { serverState: string; refreshServer: () =
     }
   }
 
-  function pollTask(taskId: string, taskSeed: number) {
-    const started = Date.now();
-    if (pollRef.current) window.clearInterval(pollRef.current);
-    pollRef.current = window.setInterval(async () => {
-      if (Date.now() - started > 15 * 60 * 1000) {
-        if (pollRef.current) window.clearInterval(pollRef.current);
+  function ensurePollTimer() {
+    if (pollTimerRef.current) return;
+    pollTimerRef.current = window.setInterval(async () => {
+      const entries = [...pollingRef.current.entries()];
+      if (entries.length === 0) {
+        if (pollTimerRef.current) window.clearInterval(pollTimerRef.current);
+        pollTimerRef.current = null;
         setBusy(false);
-        pushLog("任务超时（15分钟），请在历史中查看");
         return;
       }
-      try {
-        const t = await apiFetch<{ status: string; queue_position?: number; record?: HistoryRecord; error?: string }>(`/api/tasks/${taskId}`);
-        if (t.status === "running") {
-          setBusyText("正在创作全曲 (GPU 生成中)...");
-        } else if (t.status === "pending") {
-          setBusyText(`已入队等待显卡${t.queue_position ? ` (第 ${t.queue_position} 位)` : ""}...`);
-        } else if (t.status === "succeeded" && t.record) {
-          if (pollRef.current) window.clearInterval(pollRef.current);
-          setBusy(false);
-          pushLog(`创作成功！种子: ${taskSeed}`);
-          // 回到首页并重载（服务端分页下不再本地 unshift）
-          backToFirstPage();
-          refreshQuota();
-          play(t.record);
-          props.refreshServer();
-        } else if (t.status === "failed") {
-          if (pollRef.current) window.clearInterval(pollRef.current);
-          setBusy(false);
-          pushLog(`生成失败: ${t.error || "未知错误"}`);
+      let running = false;
+      let pendingText = "";
+      for (const [taskId, meta] of entries) {
+        if (Date.now() - meta.started > POLL_TIMEOUT_MS) {
+          pollingRef.current.delete(taskId);
+          pushLog(`任务 ${taskId} 超时（60分钟），请在历史中查看`);
+          continue;
         }
-      } catch (e) {
-        pushLog(`轮询失败: ${(e as Error).message}`);
+        try {
+          const t = await apiFetch<{ status: string; queue_position?: number; record?: HistoryRecord; error?: string }>(`/api/tasks/${taskId}`);
+          if (t.status === "running") {
+            running = true;
+          } else if (t.status === "pending") {
+            pendingText = `已入队等待显卡${t.queue_position ? ` (第 ${t.queue_position} 位)` : ""}...`;
+          } else if (t.status === "succeeded" && t.record) {
+            pollingRef.current.delete(taskId);
+            pushLog(`创作成功！task=${taskId} 种子: ${meta.seed}`);
+            // 回到首页并重载（服务端分页下不再本地 unshift）
+            backToFirstPage();
+            refreshQuota();
+            play(t.record);
+            props.refreshServer();
+          } else if (t.status === "failed") {
+            pollingRef.current.delete(taskId);
+            pushLog(`任务 ${taskId} 生成失败: ${t.error || "未知错误"}`);
+          }
+        } catch (e) {
+          pushLog(`轮询失败 ${taskId}: ${(e as Error).message}`);
+        }
+      }
+      const left = pollingRef.current.size;
+      if (left === 0) {
+        if (pollTimerRef.current) window.clearInterval(pollTimerRef.current);
+        pollTimerRef.current = null;
+        setBusy(false);
+      } else {
+        setBusy(true);
+        setBusyText(running ? "正在创作全曲 (GPU 生成中)..." : pendingText || "正在入队...");
       }
     }, 2500);
+  }
+
+  function pollTask(taskId: string, taskSeed: number) {
+    pollingRef.current.set(taskId, { seed: taskSeed, started: Date.now() });
+    setBusy(true);
+    setBusyText("正在入队...");
+    ensurePollTimer();
   }
 
   async function submit() {
     let seedNum: number | null = null;
     if (seed.trim() !== "") {
+      // Number("1e3") 会绕过整数校验，必须纯数字正则先行
+      if (!SEED_RE.test(seed.trim())) {
+        await modal.alert("种子必须是 0 ~ 2147483647 的整数，留空则随机。");
+        return;
+      }
       const n = Number(seed.trim());
       if (!Number.isInteger(n) || n < 0 || n > 2147483647) {
         await modal.alert("种子必须是 0 ~ 2147483647 的整数，留空则随机。");
@@ -239,8 +291,8 @@ export default function Studio(props: { serverState: string; refreshServer: () =
       await modal.alert("曲风描述 (Style) 和 歌词 (Lyrics) 为必填项！");
       return;
     }
-    if (style.length > 2000 || lyrics.length > 10000) {
-      await modal.alert("曲风最多 2000 字、歌词最多 10000 字。");
+    if (title.trim().length > limits.title || style.trim().length > limits.style || lyrics.trim().length > limits.lyrics) {
+      await modal.alert(`标题最多 ${limits.title} 字、曲风最多 ${limits.style} 字、歌词最多 ${limits.lyrics} 字。`);
       return;
     }
     setBusy(true);
@@ -260,7 +312,7 @@ export default function Studio(props: { serverState: string; refreshServer: () =
       pushLog(`已入队 task=${data.task_id}，第 ${data.queue_position} 位`);
       pollTask(data.task_id, data.seed);
     } catch (e) {
-      setBusy(false);
+      if (pollingRef.current.size === 0) setBusy(false);
       pushLog(`提交失败: ${(e as Error).message}`);
     }
   }
@@ -275,7 +327,7 @@ export default function Studio(props: { serverState: string; refreshServer: () =
           <label className="lbl" htmlFor="f-title">歌曲标题</label>
           <button className="mini" onClick={() => { setTitle(PRESET.title); setStyle(PRESET.style); setLyrics(PRESET.lyrics); setCot(PRESET.cot); setSeed(PRESET.seed); }}>填入《今晚不眠》</button>
         </div>
-        <input id="f-title" className="in" maxLength={100} placeholder="给你的歌曲起个名字..." value={title} onChange={(e) => setTitle(e.target.value)} />
+        <input id="f-title" className="in" maxLength={limits.title} placeholder="给你的歌曲起个名字..." value={title} onChange={(e) => setTitle(e.target.value)} />
         <div className="row">
           <div>
             <label className="lbl" htmlFor="f-seed">随机种子</label>
@@ -289,13 +341,13 @@ export default function Studio(props: { serverState: string; refreshServer: () =
             </select>
           </div>
         </div>
-        <label className="lbl" htmlFor="f-style">曲风描述（{style.length} / 2000）</label>
-        <textarea id="f-style" className="in" rows={2} maxLength={2000} value={style} onChange={(e) => setStyle(e.target.value)} />
+        <label className="lbl" htmlFor="f-style">曲风描述（{style.length} / {limits.style}）</label>
+        <textarea id="f-style" className="in" rows={2} maxLength={limits.style} value={style} onChange={(e) => setStyle(e.target.value)} />
         <label className="lbl" htmlFor="f-lyrics">歌词（{lyricLines} 行 · {lyricChars} 字）</label>
-        <textarea id="f-lyrics" className="in" rows={12} maxLength={10000} value={lyrics} onChange={(e) => setLyrics(e.target.value)} />
+        <textarea id="f-lyrics" className="in" rows={12} maxLength={limits.lyrics} value={lyrics} onChange={(e) => setLyrics(e.target.value)} />
         <div style={{ marginTop: 10 }}>
-          <button className="btn" disabled={busy} onClick={submit}>{busy ? busyText || "处理中..." : "开始生成全曲"}</button>
-          <div className="hint">多人共享显卡时自动排队；草稿自动保存在本机。状态：{props.serverState}</div>
+          <button className="btn" onClick={submit}>{busy ? busyText || "处理中..." : "开始生成全曲"}</button>
+          <div className="hint">多人共享显卡时自动排队，可连续提交多首；草稿自动保存在本机。状态：{props.serverState}</div>
         </div>
       </section>
 
@@ -331,7 +383,7 @@ export default function Studio(props: { serverState: string; refreshServer: () =
         <h3>创作历史 ({total})</h3>
         {user ? (
           <div className="userstrip">
-            <span>👤 {user.name} · 配额 {user.quota_used}/{user.quota_total <= 0 ? "不限" : user.quota_total}</span>
+            <span>👤 {user.name} · 配额 {user.quota_used}/{user.quota_total <= 0 ? "不限" : user.quota_total}{user.in_flight ? `（在途 ${user.in_flight}）` : ""}</span>
             <span style={{ display: "flex", gap: 6 }}>
               <button className={`mini${mineOnly ? " active" : ""}`} onClick={() => { setMineOnly(!mineOnly); setPage(0); }}>
                 {mineOnly ? "只看我的 ✓" : "只看我的"}

@@ -42,6 +42,7 @@ async def _consume_one() -> None:
             task["status"] = "failed"
             task["error"] = "任务已被管理员取消"
             task["finished_at"] = store.now_str()
+            store.prune_tasks()
             log.info("⏭ 跳过已取消任务 [%s]", task_id)
             return
         task["status"] = "running"
@@ -59,6 +60,7 @@ async def _consume_one() -> None:
             # 先落盘再标成功：轮询到 succeeded 即代表可查（否则客户端有竞态）
             task["status"] = "succeeded"
             task["finished_at"] = store.now_str()
+            store.prune_tasks()
             store.save_pending_snapshot()
             log.info("✅ 生成成功 [%s]", task_id)
         except Exception as e:
@@ -67,6 +69,7 @@ async def _consume_one() -> None:
             task["finished_at"] = store.now_str()
             task["error"] = (str(e)[:500] or "生成失败")
             cleanup_task_files(task_id)
+            store.prune_tasks()
             store.save_pending_snapshot()
     finally:
         # 无论成败/取消/异常，计数器必须归还，否则队列统计永久泄漏

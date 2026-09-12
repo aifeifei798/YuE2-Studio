@@ -79,6 +79,8 @@ __all__ = [
     "cleanup_tmp_files",
     "migrate_legacy_flat_outputs",
     "queue_snapshot",
+    "queued_ids",
+    "prune_tasks",
     "dir_size",
 ]
 
@@ -94,6 +96,30 @@ history_lock = threading.Lock()
 worker_task: Any = None
 # worker 心跳（monotonic 秒）：看门狗与 healthz 据此判断 worker 是否存活
 worker_heartbeat: float = 0.0
+
+# 内存任务表上限：只保留最近完成的 N 条，已完成超限即淘汰（DB 仍是全量，fetch 走 DB 兜底）
+MAX_TASKS_IN_MEMORY = 500
+
+
+def queued_ids() -> List[str]:
+    """排队中的 task_id（按入队顺序）。封装 asyncio.Queue 私有成员，调用方勿直读 _queue。"""
+    try:
+        return list(task_queue._queue)  # type: ignore[attr-defined]
+    except Exception:
+        return []
+
+
+def prune_tasks() -> None:
+    """淘汰已结束的老任务，防止 tasks 字典无限增长。pending/running 永不淘汰。"""
+    if len(tasks) <= MAX_TASKS_IN_MEMORY:
+        return
+    done = [tid for tid, t in tasks.items() if t.get("status") in ("succeeded", "failed")]
+    if not done:
+        return
+    # 按完成/创建时间从老到新排，删到上限为止
+    done.sort(key=lambda tid: (tasks[tid].get("finished_at", ""), tasks[tid].get("created_at", "")))
+    for tid in done[: len(tasks) - MAX_TASKS_IN_MEMORY]:
+        tasks.pop(tid, None)
 
 
 def beat() -> None:
@@ -179,10 +205,7 @@ _PENDING_FIELDS = ("task_id", "title", "style", "lyrics", "cot", "seed", "create
 
 def save_pending_snapshot() -> None:
     """把当前排队中的任务落盘（只含 JSON 安全字段）。"""
-    try:
-        queued: List[str] = list(task_queue._queue)  # type: ignore[attr-defined]
-    except Exception:
-        queued = []
+    queued: List[str] = queued_ids()
     snapshot = [
         {k: tasks[tid].get(k) for k in _PENDING_FIELDS}
         for tid in queued
@@ -191,7 +214,8 @@ def save_pending_snapshot() -> None:
     try:
         pf = _pending_file()
         pf.parent.mkdir(parents=True, exist_ok=True)
-        fd, tmp_path = tempfile.mkstemp(dir=str(pf.parent), prefix="pending.", suffix=".tmp")
+        # 后缀不用 .tmp：cleanup_tmp_files 会清 *.tmp，启动时序一变就会误删快照
+        fd, tmp_path = tempfile.mkstemp(dir=str(pf.parent), prefix="pending.", suffix=".snapwriting")
         try:
             with os.fdopen(fd, "w", encoding="utf-8") as f:
                 json.dump(snapshot, f, ensure_ascii=False, indent=2)
@@ -223,11 +247,19 @@ def load_pending_snapshot() -> List[Dict[str, Any]]:
 def cleanup_tmp_files() -> None:
     """清掉上次崩溃残留的 *.tmp 音频/快照临时文件。"""
     s = get_settings()
-    for d in (s.audio_dir, s.output_dir):
-        if not d.exists():
-            continue
-        for tmp in d.glob("*.tmp"):
+    # 精确匹配：只清音频半成品与快照半成品，不碰其它 .tmp
+    for tmp in list(s.audio_dir.glob("*.flac.tmp")) if s.audio_dir.exists() else []:
+        try:
+            tmp.unlink()
+            log.info("清理残留临时文件 %s", tmp.name)
+        except OSError:
+            pass
+    if s.output_dir.exists():
+        for tmp in list(s.output_dir.glob("pending.*.snapwriting")) + list(s.output_dir.glob("*.tmp")):
             try:
+                # 快照正式文件 pending.json 永不删除
+                if tmp.name == "pending.json":
+                    continue
                 tmp.unlink()
                 log.info("清理残留临时文件 %s", tmp.name)
             except OSError:
@@ -253,10 +285,7 @@ def migrate_legacy_flat_outputs() -> None:
 
 def queue_snapshot() -> Tuple[List[str], List[Dict[str, Any]], Dict[str, Any] | None]:
     """返回 (排队task_id列表, pending任务, running任务)。"""
-    try:
-        queued: List[str] = list(task_queue._queue)  # type: ignore[attr-defined]
-    except Exception:
-        queued = []
+    queued: List[str] = queued_ids()
     pending = [tasks[tid] for tid in queued if tid in tasks]
     running = next((t for t in tasks.values() if t.get("status") == "running"), None)
     return queued, pending, running

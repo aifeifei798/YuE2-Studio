@@ -42,9 +42,18 @@ export interface QuotaInfo {
   quota_total: number;
   quota_used: number;
   quota_left: number | null;
+  in_flight?: number;
   enabled: boolean;
   created_at: string;
   last_used_at: string;
+}
+
+export interface PublicConfig {
+  max_title_len: number;
+  max_style_len: number;
+  max_lyrics_len: number;
+  require_api_key: boolean;
+  max_queue: number;
 }
 
 const USER_KEY = "yue2-user";

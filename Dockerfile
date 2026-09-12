@@ -3,8 +3,8 @@
 # 需要前后端分离请用 docker-compose.yml（api + web 两个容器）。
 FROM node:20-slim AS webbuild
 WORKDIR /build
-COPY web/package.json ./
-RUN npm install --no-audit --no-fund
+COPY web/package.json web/package-lock.json ./
+RUN npm ci --no-audit --no-fund
 COPY web/ ./
 RUN npm run build
 

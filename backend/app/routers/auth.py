@@ -41,12 +41,15 @@ def require_key(request: Request) -> dict:
 
 def key_quota_view(row: dict) -> dict:
     quota = row["quota_total"]
+    key_id = row.get("id")
+    in_flight = store.count_active_by_key(key_id) if key_id is not None else 0
     return {
         "name": row["name"],
         "quota_total": quota,
         "quota_used": row["used_count"],
-        # 配额语义：成功生成的歌曲数；排队中/失败不计
-        "quota_left": None if quota <= 0 else max(0, quota - row["used_count"]),
+        # 配额语义：成功生成的歌曲数；失败/取消不计，但在途占用配额（used + 在途 >= quota 即拒）
+        "quota_left": None if quota <= 0 else max(0, quota - row["used_count"] - in_flight),
+        "in_flight": in_flight,
         "enabled": bool(row["enabled"]),
         "created_at": row["created_at"],
         "last_used_at": row["last_used_at"],

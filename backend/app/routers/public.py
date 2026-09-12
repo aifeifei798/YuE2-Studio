@@ -39,7 +39,7 @@ def public_task_view(task: dict) -> dict:
         view["error"] = task.get("error", "生成失败")
     if task["status"] in ("pending", "running"):
         try:
-            queued = list(store.task_queue._queue)  # type: ignore[attr-defined]
+            queued = store.queued_ids()
             view["queue_position"] = queued.index(task["task_id"]) + 1 if task["task_id"] in queued else 0
         except Exception:
             view["queue_position"] = 0
@@ -81,11 +81,6 @@ async def generate_music(req: GenerateRequest, request: Request):
             raise HTTPException(status_code=403, detail="该 Key 已被管理员停用")
     elif s.require_api_key:
         raise HTTPException(status_code=401, detail="本站点要求登录后才能生成（用户名 + Key）")
-    if not store.check_submit_rate(ip, s.submit_per_hour):
-        raise HTTPException(
-            status_code=429,
-            detail=f"提交过于频繁（每 IP 每小时限 {s.submit_per_hour} 次），请稍后再试",
-        )
     if key_row is not None and key_row["quota_total"] > 0:
         used = key_row["used_count"] + store.count_active_by_key(key_row["id"])
         if used >= key_row["quota_total"]:
@@ -93,11 +88,20 @@ async def generate_music(req: GenerateRequest, request: Request):
                 status_code=429,
                 detail=f"该 Key 配额已用完（{key_row['used_count']}/{key_row['quota_total']} 首），请联系管理员",
             )
-    active = store.count_active_by_ip(ip)
-    if s.max_pending_per_ip > 0 and active >= s.max_pending_per_ip:
+    # 已登录（Key）用户按 Key 配额限流，不再叠加 IP 并存限制；
+    # 匿名提交仍按 IP 限流（无账号体系下 IP 即用户）
+    if key_row is None and s.max_pending_per_ip > 0:
+        active = store.count_active_by_ip(ip)
+        if active >= s.max_pending_per_ip:
+            raise HTTPException(
+                status_code=429,
+                detail=f"该 IP 已有 {active} 个进行中任务（上限 {s.max_pending_per_ip} 个），请等待完成后再提交",
+            )
+    # 放最后：只有前面全部通过才计入小时限流，配额/IP 挡掉的不消耗次数
+    if not store.check_submit_rate(ip, s.submit_per_hour):
         raise HTTPException(
             status_code=429,
-            detail=f"该 IP 已有 {active} 个进行中任务（上限 {s.max_pending_per_ip} 个），请等待完成后再提交",
+            detail=f"提交过于频繁（每 IP 每小时限 {s.submit_per_hour} 次），请稍后再试",
         )
 
     title = req.title.strip() if req.title and req.title.strip() else "未命名歌曲"
@@ -124,6 +128,19 @@ async def generate_music(req: GenerateRequest, request: Request):
         "status": "pending",
         "queue_position": store.task_queue.qsize(),
         "seed": actual_seed,
+    }
+
+
+@router.get("/api/config")
+def public_config():
+    """前端动态取长度上限/开关，避免前后端硬编码两头漂移（无敏感字段）。"""
+    s = get_settings()
+    return {
+        "max_title_len": s.max_title_len,
+        "max_style_len": s.max_style_len,
+        "max_lyrics_len": s.max_lyrics_len,
+        "require_api_key": s.require_api_key,
+        "max_queue": s.max_queue,
     }
 
 
