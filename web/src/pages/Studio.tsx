@@ -416,7 +416,7 @@ export default function Studio(props: { serverState: string; refreshServer: () =
   return (
     <div className="layout cols3">
       {/* 左：创作 */}
-      <section className="panel">
+      <section className="panel studio-left">
         <div className="section-title">
           <h3 style={{ margin: 0 }}><Wand2 size={15} /> 创作灵感</h3>
           <button
@@ -426,33 +426,49 @@ export default function Studio(props: { serverState: string; refreshServer: () =
             <Sparkles size={12} /> 试试《今晚不眠》
           </button>
         </div>
+
         <label className="lbl" htmlFor="f-title"><span>歌曲标题</span><span className={`count${title.length > limits.title ? " over" : ""}`}>{title.length} / {limits.title}</span></label>
         <input id="f-title" className="in" maxLength={limits.title} placeholder="给你的歌曲起个名字..." value={title} onChange={(e) => setTitle(e.target.value)} />
-        <div className="row">
-          <div>
-            <label className="lbl" htmlFor="f-seed"><span>随机种子</span></label>
-            <div style={{ display: "flex", gap: 6 }}>
-              <input id="f-seed" className="in" type="number" min={0} max={2147483647} placeholder="留空随机" value={seed} onChange={(e) => setSeed(e.target.value)} style={{ fontFamily: "monospace" }} />
-              <button className="icon-btn" title="随机一个种子" onClick={randomSeed} style={{ width: 36, height: 36 }}><Dices size={15} /></button>
-            </div>
-          </div>
-          <div>
-            <label className="lbl"><span>思维模式</span></label>
-            <div className="seg">
-              <button className={cot === "full" ? "on" : ""} onClick={() => setCot("full")}>Full · 推荐</button>
-              <button className={cot === "none" ? "on" : ""} onClick={() => setCot("none")}>None · 直出</button>
-            </div>
-          </div>
-        </div>
+
         <label className="lbl" htmlFor="f-style"><span>曲风描述 Style</span><span className={`count${style.length > limits.style ? " over" : ""}`}>{style.length} / {limits.style}</span></label>
         <textarea id="f-style" className="in" rows={3} maxLength={limits.style} placeholder="City Pop, upbeat, groovy bass..." value={style} onChange={(e) => setStyle(e.target.value)} />
-        <div className="chips">
+        {/* 曲风预设：单行横向滚动胶囊 */}
+        <div className="chips-row">
           {STYLE_PRESETS.map((p) => (
             <button key={p.name} className="chip" onClick={() => setStyle(p.style)} title={p.style}>{p.name}</button>
           ))}
         </div>
+
         <label className="lbl" htmlFor="f-lyrics"><span>歌词 Lyrics</span><span className="count">{lyricLines} 行 · {lyricChars} 字</span></label>
         <textarea id="f-lyrics" className="in lyrics-box" rows={8} maxLength={limits.lyrics} placeholder="[Verse]&#10;..." value={lyrics} onChange={(e) => setLyrics(e.target.value)} />
+
+        {/* 高级设置：默认收起的小抽屉 */}
+        <details className="adv">
+          <summary>
+            <span className="caret">▶</span> 高级设置
+            <span className="adv-hint">Seed · 思维模式</span>
+          </summary>
+          <div className="adv-body">
+            <div className="row">
+              <div>
+                <label className="lbl" htmlFor="f-seed"><span>随机种子</span></label>
+                <div style={{ display: "flex", gap: 6 }}>
+                  <input id="f-seed" className="in" type="number" min={0} max={2147483647} placeholder="留空随机" value={seed} onChange={(e) => setSeed(e.target.value)} style={{ fontFamily: "monospace" }} />
+                  <button className="icon-btn" title="随机一个种子" onClick={randomSeed} style={{ width: 36, height: 36, borderColor: "rgba(255,255,255,0.08)", background: "#0d1019" }}><Dices size={15} /></button>
+                </div>
+              </div>
+              <div>
+                <label className="lbl"><span>思维模式</span></label>
+                <div className="seg">
+                  <button className={cot === "full" ? "on" : ""} onClick={() => setCot("full")}>Full · 推荐</button>
+                  <button className={cot === "none" ? "on" : ""} onClick={() => setCot("none")}>None · 直出</button>
+                </div>
+              </div>
+            </div>
+            <div className="hint">相同 Seed + 相同词曲可复现结果；Full 质量更高，None 速度更快。</div>
+          </div>
+        </details>
+
         <div className="submit-bar">
           <button className={`btn${busy ? " busy" : ""}`} onClick={submit} disabled={busy}>
             {busy ? (busyText || "处理中...") : (<><Wand2 size={16} /> 开始生成全曲</>)}
@@ -466,36 +482,42 @@ export default function Studio(props: { serverState: string; refreshServer: () =
       {/* 中：播放器 */}
       <section className="studio-center" style={{ display: "flex", flexDirection: "column", gap: 12, minWidth: 0 }}>
         <div className="hero">
-          <div className="hero-bg">
+          <div className="hero-bg" aria-hidden>
             {current
               ? <Cover seed={current.seed} title={current.title} size={420} rounded={0} />
               : (
                 <svg viewBox="0 0 400 220" preserveAspectRatio="xMidYMid slice">
-                  <defs>
-                    <radialGradient id="idle-b" cx="30%" cy="20%" r="90%">
-                      <stop offset="0%" stopColor="#1b2140" /><stop offset="100%" stopColor="#07080e" />
-                    </radialGradient>
-                  </defs>
-                  <rect width="400" height="220" fill="url(#idle-b)" />
-                  <circle cx="90" cy="70" r="80" fill="#7e22ce" opacity=".35" />
-                  <circle cx="310" cy="60" r="70" fill="#3b82f6" opacity=".3" />
-                  <circle cx="200" cy="150" r="90" fill="#6366f1" opacity=".25" />
+                  <rect width="400" height="220" fill="#0d1019" />
+                  <ellipse cx="200" cy="40" rx="220" ry="90" fill="#8b5cf6" opacity="0.14" />
+                  <ellipse cx="200" cy="200" rx="260" ry="100" fill="#6366f1" opacity="0.1" />
                 </svg>
               )}
           </div>
           <div className="hero-fg">
-            <div className="hero-title">
-              {playing && <span className="eq"><i /><i /><i /></span>}
-              {current ? current.title : "等待聆听 🎧"}
-            </div>
-            <div className="hero-sub">
-              {current ? (
-                <>
-                  <span>SEED {current.seed}</span>
-                  <span>·</span><span>{current.cot === "full" ? "Full 深度创作" : "None 直出"}</span>
-                  <span>·</span><span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}><Clock size={11} /> {current.created_at}</span>
-                </>
-              ) : "在右侧点一首歌，或在左侧开始你的第一首创作"}
+            <div className="hero-top">
+              {current
+                ? <span className="hero-cover"><Cover seed={current.seed} title={current.title} size={64} rounded={12} /></span>
+                : <span className="hero-cover placeholder">🎧</span>}
+              <div className="hero-meta">
+                <div className="hero-title">
+                  {playing && <span className="eq"><i /><i /><i /></span>}
+                  <span className="title-text">{current ? current.title : "等待聆听"}</span>
+                </div>
+                <div className="hero-sub">
+                  {current ? (
+                    <>
+                      <span>SEED {current.seed}</span>
+                      <span>·</span><span>{current.cot === "full" ? "Full 深度创作" : "None 直出"}</span>
+                      <span>·</span><span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}><Clock size={11} /> {current.created_at}</span>
+                    </>
+                  ) : "在右侧点一首歌，或在左侧开始你的第一首创作"}
+                </div>
+              </div>
+              <div className="player-controls">
+                <button className="play-btn" onClick={togglePlay} disabled={!current} title={playing ? "暂停" : "播放"}>
+                  {playing ? <Pause /> : <Play style={{ marginLeft: 2 }} />}
+                </button>
+              </div>
             </div>
             <div className="wave-wrap">
               {current ? (
@@ -503,15 +525,12 @@ export default function Studio(props: { serverState: string; refreshServer: () =
               ) : (
                 <div className="wave-fallback" aria-hidden>
                   {Array.from({ length: 48 }, (_, i) => 10 + ((i * 37) % 50)).map((h, i) => (
-                    <i key={i} style={{ height: h, opacity: .35 }} />
+                    <i key={i} style={{ height: h, opacity: .5 }} />
                   ))}
                 </div>
               )}
             </div>
-            <div className="player-controls">
-              <button className="play-btn" onClick={togglePlay} disabled={!current} title={playing ? "暂停" : "播放"}>
-                {playing ? <Pause /> : <Play style={{ marginLeft: 2 }} />}
-              </button>
+            <div className="player-foot">
               {current && (
                 <a className="mini" href={current.audio_url} download title="下载 FLAC" style={{ textDecoration: "none", padding: "8px 14px" }}>
                   <Download size={12} /> FLAC
@@ -533,19 +552,19 @@ export default function Studio(props: { serverState: string; refreshServer: () =
           </div>
           {centerTab === "profile" && (
             current ? (
-              <>
-                <div className="kv">
-                  <span>种子：{current.seed}</span>
-                  <span>模式：{current.cot}</span>
-                  <span>编号：{current.task_id}</span>
-                  <span>归属：{current.owner || "匿名"}</span>
-                  <span style={{ gridColumn: "1 / -1" }}>时间：{current.created_at}</span>
+              <div className="reader">
+                <div className="reader-meta">
+                  <span>种子 <b>{current.seed}</b></span>
+                  <span>模式 <b>{current.cot}</b></span>
+                  <span>编号 <b>{current.task_id}</b></span>
+                  <span>归属 <b>{current.owner || "匿名"}</b></span>
+                  <span>时间 <b>{current.created_at}</b></span>
                 </div>
-                <div className="hint">风格</div>
-                <div className="pre">{current.style}</div>
-                <div className="hint">歌词</div>
-                <div className="pre" style={{ maxHeight: 260 }}>{current.lyrics}</div>
-              </>
+                <div className="reader-label">风格 Style</div>
+                <div className="reader-body">{current.style}</div>
+                <div className="reader-label">歌词 Lyrics</div>
+                <div className="reader-body lyrics">{current.lyrics}</div>
+              </div>
             ) : (<EmptyState emoji="💿" title="还没有选中曲目" sub="右侧历史里点一首，档案会出现在这里" />)
           )}
           {centerTab === "logs" && (
@@ -560,31 +579,31 @@ export default function Studio(props: { serverState: string; refreshServer: () =
           <h3 style={{ margin: 0 }}><ListMusic size={15} /> 创作历史 ({total})</h3>
         </div>
         {user ? (
-          <div>
-            <div className="userstrip">
-              <span className="avatar"><User size={14} /></span>
-              <span style={{ minWidth: 0, flex: 1 }}>
-                <span style={{ fontWeight: 800, color: "#fff" }}>{user.name}</span>
-                <span style={{ color: "var(--mut)" }}> · {user.quota_total <= 0 ? "无限配额" : `剩 ${user.quota_left ?? "?"} 首`}{user.in_flight ? `（在途 ${user.in_flight}）` : ""}</span>
-                {user.quota_total > 0 && <span className="quota-bar"><div style={{ width: `${quotaPct}%` }} /></span>}
+          <div className="userstrip compact">
+            <span className="avatar"><User size={14} /></span>
+            <span className="user-name">
+              <span className="user-name-row">
+                <span style={{ fontWeight: 800, color: "#fff", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{user.name}</span>
+                <span style={{ color: "var(--mut)", whiteSpace: "nowrap", fontSize: 11 }}>{user.quota_total <= 0 ? "无限配额" : `剩 ${user.quota_left ?? "?"} 首`}{user.in_flight ? `（在途 ${user.in_flight}）` : ""}</span>
               </span>
-              <span style={{ display: "flex", gap: 6 }}>
-                <button className={`mini${mineOnly ? " active" : ""}`} onClick={() => { setMineOnly(!mineOnly); setPage(0); }}>
-                  我的
-                </button>
-                <button className="icon-btn" title="退出登录" onClick={logout}><LogOut size={13} /></button>
-              </span>
-            </div>
+              {user.quota_total > 0 && <span className="quota-bar"><div style={{ width: `${quotaPct}%` }} /></span>}
+            </span>
+            <span style={{ display: "flex", gap: 6, flexShrink: 0 }}>
+              <button className={`mini${mineOnly ? " active" : ""}`} onClick={() => { setMineOnly(!mineOnly); setPage(0); }}>
+                我的
+              </button>
+              <button className="icon-btn" title="退出登录" onClick={logout} style={{ borderColor: "rgba(255,255,255,0.08)", background: "#0d1019" }}><LogOut size={13} /></button>
+            </span>
           </div>
         ) : (
-          <div className="userstrip">
-            <input className="in" style={{ width: 96, padding: "6px 10px" }} placeholder="用户名" value={loginName} onChange={(e) => setLoginName(e.target.value)} />
-            <input className="in" style={{ flex: 1, minWidth: 0, padding: "6px 10px" }} type="password" placeholder="Key（找管理员领取）" value={loginKey} onChange={(e) => setLoginKey(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") login(); }} />
-            <button className="mini primary" onClick={login}>登录</button>
+          <div className="userstrip compact">
+            <input className="in" style={{ width: 88, flexShrink: 0 }} placeholder="用户名" value={loginName} onChange={(e) => setLoginName(e.target.value)} />
+            <input className="in" style={{ flex: 1, minWidth: 0 }} type="password" placeholder="Key（找管理员领取）" value={loginKey} onChange={(e) => setLoginKey(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") login(); }} />
+            <button className="mini primary" onClick={login} style={{ flexShrink: 0 }}>登录</button>
           </div>
         )}
         <div style={{ position: "relative" }}>
-          <Search size={13} style={{ position: "absolute", left: 11, top: 11, color: "#475569" }} />
+          <Search size={13} style={{ position: "absolute", left: 11, top: 11, color: "#4b5468" }} />
           <input className="in" placeholder="搜索歌名或 Seed..." value={query} onChange={(e) => { setQuery(e.target.value); setPage(0); }} style={{ paddingLeft: 30 }} />
         </div>
         <div className="hist-scroll">
@@ -599,7 +618,7 @@ export default function Studio(props: { serverState: string; refreshServer: () =
                 <div className="t">
                   {current?.task_id === item.task_id && playing
                     ? <span className="eq"><i /><i /><i /></span>
-                    : <History size={12} style={{ color: "#7c8aa0", flexShrink: 0 }} />}
+                    : <History size={12} style={{ color: "#5d6579", flexShrink: 0 }} />}
                   <span style={{ overflow: "hidden", textOverflow: "ellipsis" }}>{item.title}</span>
                 </div>
                 <div className="s"><span>Seed {item.seed}</span>{item.owner && <span className="owner-tag">{item.owner}</span>}</div>
