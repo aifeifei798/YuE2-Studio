@@ -39,6 +39,8 @@ cp .env.example .env   # 必做
 #   ADMIN_TOKEN=...     # 设一个长随机串，否则管理页不可用（/api/admin/* 全 403）
 #   CORS_ORIGINS=...    # 公网部署时改成你的域名，如 https://music.example.com
 #   YUE2_MAX_QUEUE=10   # 按显存/并发意愿调
+#   YUE2_SUBMIT_PER_HOUR=20        # 每 IP 每小时提交次数
+#   YUE2_MAX_PENDING_PER_IP=2      # 每 IP 最大并存任务数（无账号体系下 IP 即用户）
 
 docker compose up --build -d
 docker compose ps                       # 两个容器都 healthy 才算好
@@ -110,10 +112,14 @@ docker compose pull && docker compose up -d   # 注意：不要再加 --build
 | DELETE | `/api/admin/history/{id}` | 管理删档（含文件） |
 | GET | `/api/admin/disk` | 音频数/字节/磁盘余量/排队 |
 | GET | `/api/admin/logs?tail=` | 内存日志环（500 条） |
-| GET/PUT | `/api/admin/config` | 查看/热更新 `max_queue, log_level`（重启后以 env 为准） |
+| GET/PUT | `/api/admin/config` | 查看/热更新 `max_queue, submit_per_hour, max_pending_per_ip, log_level`（重启后以 env 为准） |
 
 `POST /api/generate`：`title(≤100) / style(1~2000) / lyrics(1~10000) / cot(full|none) / seed(0~2^31-1, null=随机)`。
+配额（429 时看返回文案区分）：全局排队上限 `YUE2_MAX_QUEUE`；每 IP 每小时提交数 `YUE2_SUBMIT_PER_HOUR`（0=不限）；
+每 IP 并存任务数 `YUE2_MAX_PENDING_PER_IP`（pending+running，0=不限）。三者都可在管理页 config 标签热更新。
 
 ## 数据
 
-`outputs/audio/*.flac`、`outputs/artifacts/<id>/`、`outputs/history.json`（原子写+损坏自动备份）。compose 用命名卷 `outputs`，备份请直接快照该卷。
+`outputs/audio/*.flac`、`outputs/artifacts/<id>/`、`outputs/history.db`（SQLite，历史记录）、`outputs/pending.json`（排队快照）。
+老 `history.json` 首次启动自动一次性导入 SQLite 并改名 `history.json.migrated`（原文件保留可查）。
+compose 用命名卷 `outputs`，备份请直接快照该卷。

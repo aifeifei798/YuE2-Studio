@@ -12,10 +12,9 @@ from fastapi.staticfiles import StaticFiles
 
 from .core.config import get_settings
 from .core.store import (
-    TASK_ID_RE,
     RingBufferHandler,
     cleanup_tmp_files,
-    get_all_history,
+    init_db,
     load_pending_snapshot,
     migrate_legacy_flat_outputs,
     task_queue,
@@ -52,10 +51,8 @@ async def lifespan(app: FastAPI):
 
     migrate_legacy_flat_outputs()
     cleanup_tmp_files()
-    for rec in get_all_history():
-        tid = rec.get("task_id")
-        if isinstance(tid, str) and TASK_ID_RE.match(tid) and tid not in tasks:
-            tasks[tid] = {"task_id": tid, "status": "succeeded", "record": rec, **rec}
+    init_db()  # 建表 + 老 history.json 一次性迁移
+    # 注意：历史不再全量预载入内存；重启后的查询走 fetch_task 的 DB 兜底
     # 恢复上次未消费完的排队任务（运行中任务因进程结束已中断，不恢复）
     restored = 0
     for item in load_pending_snapshot():

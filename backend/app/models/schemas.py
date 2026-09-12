@@ -27,4 +27,6 @@ class TaskCreateResponse(BaseModel):
 
 class AdminConfigUpdate(BaseModel):
     max_queue: Optional[int] = Field(default=None, ge=1, le=100)
+    submit_per_hour: Optional[int] = Field(default=None, ge=0, le=10000)
+    max_pending_per_ip: Optional[int] = Field(default=None, ge=0, le=100)
     log_level: Optional[str] = Field(default=None, max_length=10)

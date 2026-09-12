@@ -16,11 +16,12 @@ FastAPI (GPU) + Vite+React 前后端分离作曲工作台。单卡串行生成�
 
 ## 数据与约束
 
-- `outputs/audio/*.flac`、`outputs/artifacts/<id>/`、`outputs/history.json`（原子写；损坏自动备份 `*.bak.*`）。compose 用命名卷 `outputs`。
+- `outputs/audio/*.flac`、`outputs/artifacts/<id>/`、`outputs/history.db`（SQLite；老 `history.json` 首次启动自动导入并改名 `.migrated`）。compose 用命名卷 `outputs`。
 - `task_id` 恒为 8 位 hex；`audio_url` 恒为同源 `/audio/<id>.flac`（前后端都有格式校验，改动时保持）。
 - 取消任务只对排队中有效，运行中返回 409（GPU 不可抢占）。
 - 删除歌曲只有管理端（`DELETE /api/admin/history`，Studio 页登录后才显示按钮）；公开 `/healthz` 无敏感字段，模型错误原文只在 `GET /api/admin/health`。
-- `POST /api/generate` 按 IP 限流（`YUE2_SUBMIT_PER_HOUR`，nginx 透传 `X-Forwarded-For`）；排队快照 `outputs/pending.json`，重启自动恢复 pending 任务。
+- `POST /api/generate` 按 IP 限流（`YUE2_SUBMIT_PER_HOUR`，nginx 透传 `X-Forwarded-For`）；另有每 IP 并存任务上限 `YUE2_MAX_PENDING_PER_IP`（pending+running，无账号体系下 IP 即用户）；两者都可在管理页 config 热更新。
+- 排队快照 `outputs/pending.json`，重启自动恢复 pending 任务。
 
 ## 验证（pytest + tsc + compose config，CI 同款）
 

@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { apiFetch, getAdminToken, isSafeAudioUrl, type HistoryRecord } from "../lib/api";
+import { useModal } from "../components/Modal";
 
 const DRAFT_KEY = "yue2-draft-v1";
 const TASK_ID_RE = /^[0-9a-f]{8}$/;
+const PAGE_SIZE = 20;
 const PRESET = {
   title: "今晚不眠",
   style: "City Pop, upbeat, danceable, groovy bass\nelectric guitar, synth, energetic, joyful\nneon city night, emotional male vocal",
@@ -22,8 +24,10 @@ export default function Studio(props: { serverState: string; refreshServer: () =
   const [history, setHistory] = useState<HistoryRecord[]>([]);
   const [total, setTotal] = useState(0);
   const [query, setQuery] = useState("");
+  const [page, setPage] = useState(0);
   const [current, setCurrent] = useState<HistoryRecord | null>(null);
   const [logs, setLogs] = useState<string[]>(["[Ready] 系统就绪，等待指令"]);
+  const modal = useModal();
   // 删除是管理操作：无 admin token 时不展示删除按钮
   const [isAdmin] = useState(() => getAdminToken() !== "");
   const audioRef = useRef<HTMLAudioElement>(null);
@@ -35,7 +39,7 @@ export default function Studio(props: { serverState: string; refreshServer: () =
 
   const loadHistory = useCallback(async () => {
     try {
-      const params = new URLSearchParams({ limit: "100", offset: "0" });
+      const params = new URLSearchParams({ limit: String(PAGE_SIZE), offset: String(page * PAGE_SIZE) });
       if (query.trim()) params.set("q", query.trim());
       const data = await apiFetch<{ total: number; items: HistoryRecord[] }>(`/api/history?${params}`);
       setHistory(data.items || []);
@@ -43,7 +47,7 @@ export default function Studio(props: { serverState: string; refreshServer: () =
     } catch (e) {
       pushLog(`拉取历史失败: ${(e as Error).message}`);
     }
-  }, [query, pushLog]);
+  }, [query, page, pushLog]);
 
   useEffect(() => {
     try {
@@ -72,7 +76,7 @@ export default function Studio(props: { serverState: string; refreshServer: () =
   useEffect(() => {
     const t = setTimeout(loadHistory, 300);
     return () => clearTimeout(t);
-  }, [query, loadHistory]);
+  }, [query, page, loadHistory]);
 
   useEffect(() => () => { if (pollRef.current) window.clearInterval(pollRef.current); }, []);
 
@@ -92,11 +96,12 @@ export default function Studio(props: { serverState: string; refreshServer: () =
 
   async function removeItem(id: string) {
     if (!TASK_ID_RE.test(id)) return;
-    if (!confirm("确定删除该曲目吗？音频文件也会一起删除。")) return;
+    if (!(await modal.confirm("确定删除该曲目吗？音频文件也会一起删除。"))) return;
     try {
       await apiFetch(`/api/admin/history/${id}`, { method: "DELETE" }, true);
-      setHistory((h) => h.filter((x) => x.task_id !== id));
-      setTotal((t) => Math.max(0, t - 1));
+      // 删掉本页最后一条且不在首页时退一页，否则重载本页
+      if (history.length <= 1 && page > 0) setPage(page - 1);
+      else loadHistory();
       pushLog(`已删除曲目 ${id}`);
     } catch (e) {
       pushLog(`删除失败: ${(e as Error).message}`);
@@ -123,9 +128,9 @@ export default function Studio(props: { serverState: string; refreshServer: () =
           if (pollRef.current) window.clearInterval(pollRef.current);
           setBusy(false);
           pushLog(`创作成功！种子: ${taskSeed}`);
-          setHistory((h) => [t.record as HistoryRecord, ...h]);
-          setTotal((x) => x + 1);
+          // 回到首页并重载（服务端分页下不再本地 unshift）
           setQuery("");
+          setPage(0);
           play(t.record);
           props.refreshServer();
         } else if (t.status === "failed") {
@@ -144,17 +149,17 @@ export default function Studio(props: { serverState: string; refreshServer: () =
     if (seed.trim() !== "") {
       const n = Number(seed.trim());
       if (!Number.isInteger(n) || n < 0 || n > 2147483647) {
-        alert("种子必须是 0 ~ 2147483647 的整数，留空则随机。");
+        await modal.alert("种子必须是 0 ~ 2147483647 的整数，留空则随机。");
         return;
       }
       seedNum = n;
     }
     if (!style.trim() || !lyrics.trim()) {
-      alert("曲风描述 (Style) 和 歌词 (Lyrics) 为必填项！");
+      await modal.alert("曲风描述 (Style) 和 歌词 (Lyrics) 为必填项！");
       return;
     }
     if (style.length > 2000 || lyrics.length > 10000) {
-      alert("曲风最多 2000 字、歌词最多 10000 字。");
+      await modal.alert("曲风最多 2000 字、歌词最多 10000 字。");
       return;
     }
     setBusy(true);
@@ -238,7 +243,7 @@ export default function Studio(props: { serverState: string; refreshServer: () =
 
       <section className="panel">
         <h3>创作历史 ({total})</h3>
-        <input className="in" placeholder="搜索歌名或 Seed..." value={query} onChange={(e) => setQuery(e.target.value)} />
+        <input className="in" placeholder="搜索歌名或 Seed..." value={query} onChange={(e) => { setQuery(e.target.value); setPage(0); }} />
         <div style={{ marginTop: 10 }}>
           {history.length === 0 && <div className="hint">无匹配的曲目</div>}
           {history.map((item) => (
@@ -250,6 +255,11 @@ export default function Studio(props: { serverState: string; refreshServer: () =
               {isAdmin && <button className="mini danger" onClick={(e) => { e.stopPropagation(); removeItem(item.task_id); }}>删</button>}
             </div>
           ))}
+        </div>
+        <div className="pager">
+          <button className="mini" disabled={page <= 0} onClick={() => setPage(page - 1)}>上一页</button>
+          <span className="hint">第 {page + 1} 页 / 共 {Math.max(1, Math.ceil(total / PAGE_SIZE))} 页</span>
+          <button className="mini" disabled={(page + 1) * PAGE_SIZE >= total} onClick={() => setPage(page + 1)}>下一页</button>
         </div>
       </section>
     </div>

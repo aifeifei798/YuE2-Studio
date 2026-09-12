@@ -74,3 +74,57 @@ def test_rate_limit(client):
         assert r.status_code == 429
     finally:
         s.submit_per_hour = old
+
+
+def test_history_pagination_and_search(client):
+    for i in range(3):
+        r = client.post(
+            "/api/generate",
+            json={"title": f"分页歌{i}", "style": "pop", "lyrics": "la", "cot": "full", "seed": i},
+        )
+        assert r.status_code == 202
+        assert wait_status(client, r.json()["task_id"])["status"] == "succeeded"
+
+    page1 = client.get("/api/history", params={"limit": 2, "offset": 0}).json()
+    assert page1["total"] == 3 and len(page1["items"]) == 2
+    page2 = client.get("/api/history", params={"limit": 2, "offset": 2}).json()
+    assert page2["total"] == 3 and len(page2["items"]) == 1
+    # 最新在前
+    assert page1["items"][0]["title"] == "分页歌2"
+
+    found = client.get("/api/history", params={"limit": 10, "offset": 0, "q": "分页歌1"}).json()
+    assert found["total"] == 1 and found["items"][0]["title"] == "分页歌1"
+    assert client.get("/api/history", params={"limit": 10, "q": "不存在的歌"}).json()["total"] == 0
+
+
+def test_quota_per_ip(client, monkeypatch):
+    import threading
+    import time
+
+    from backend.app.services import queue as queue_mod
+
+    gate = threading.Event()
+    real = queue_mod.run_generation
+
+    def blocking(task):
+        gate.wait(timeout=15)
+        return real(task)
+
+    monkeypatch.setattr(queue_mod, "run_generation", blocking)
+    s = get_settings()
+    old = s.max_pending_per_ip
+    s.max_pending_per_ip = 1
+    try:
+        payload = {"title": "t", "style": "pop", "lyrics": "la", "cot": "full", "seed": 1}
+        first = client.post("/api/generate", json=payload).json()["task_id"]
+        deadline = time.time() + 10
+        while client.get(f"/api/tasks/{first}").json()["status"] != "running" and time.time() < deadline:
+            time.sleep(0.1)
+        # 同一 IP 已有 1 个进行中 → 第二个被配额挡掉
+        r = client.post("/api/generate", json=payload)
+        assert r.status_code == 429
+        assert "进行中" in r.json()["detail"]
+    finally:
+        s.max_pending_per_ip = old
+        gate.set()
+    assert wait_status(client, first)["status"] == "succeeded"

@@ -77,11 +77,19 @@ def _reset_state():
         except Exception:
             break
     store.submit_hits.clear()
-    for name in ("history.json", "pending.json"):
+    out = get_settings().output_dir
+    for name in ("history.json", "history.json.migrated", "pending.json"):
         try:
-            (get_settings().output_dir / name).unlink()
+            (out / name).unlink()
         except OSError:
             pass
+    # 历史库只清数据不清文件：删库文件会导致表丢失（建表仅 lifespan 跑一次）
+    from backend.app.core import history_db
+
+    try:
+        history_db.clear_all()
+    except Exception:
+        pass
     reload_settings()
 
 

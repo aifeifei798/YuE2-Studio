@@ -1,4 +1,7 @@
-"""共享运行时状态：内存任务表 + GPU 队列 + 历史文件原子读写 + 内存日志环。"""
+"""共享运行时状态：内存任务表 + GPU 队列 + 排队快照 + 内存日志环。
+
+历史记录持久化见 `history_db.py`（SQLite），此处仅做兼容重导出。
+"""
 from __future__ import annotations
 
 import asyncio
@@ -16,6 +19,49 @@ from pathlib import Path
 from typing import Any, Deque, Dict, List, Tuple
 
 from .config import get_settings
+from .history_db import (
+    add_history_record,
+    count_history,
+    get_history_record,
+    init_db,
+    migrate_from_json,
+    query_history,
+    remove_history_record,
+)
+
+__all__ = [
+    "TASK_ID_RE",
+    "SAFE_FILENAME_RE",
+    "task_queue",
+    "tasks",
+    "history_lock",
+    "worker_task",
+    "worker_heartbeat",
+    "beat",
+    "worker_alive",
+    "pipe",
+    "model_loaded",
+    "model_error",
+    "log_buffer",
+    "RingBufferHandler",
+    "submit_hits",
+    "check_submit_rate",
+    "count_active_by_ip",
+    "now_str",
+    "add_history_record",
+    "remove_history_record",
+    "get_history_record",
+    "count_history",
+    "query_history",
+    "init_db",
+    "migrate_from_json",
+    "save_pending_snapshot",
+    "load_pending_snapshot",
+    "cleanup_tmp_files",
+    "migrate_legacy_flat_outputs",
+    "queue_snapshot",
+    "dir_size",
+]
 
 log = logging.getLogger("yue2-studio")
 
@@ -74,6 +120,15 @@ def check_submit_rate(ip: str, per_hour: int) -> bool:
     return True
 
 
+def count_active_by_ip(ip: str) -> int:
+    """该 IP 当前并存任务数（pending + running）。无账号体系下 IP 即用户。"""
+    return sum(
+        1
+        for t in tasks.values()
+        if t.get("client") == ip and t.get("status") in ("pending", "running")
+    )
+
+
 class RingBufferHandler(logging.Handler):
     def emit(self, record: logging.LogRecord) -> None:
         try:
@@ -86,69 +141,8 @@ def now_str() -> str:
     return datetime.datetime.now().astimezone().strftime("%Y-%m-%d %H:%M:%S")
 
 
-def _history_file() -> Path:
-    return get_settings().history_file
-
-
 def _pending_file() -> Path:
     return get_settings().output_dir / "pending.json"
-
-
-def _backup_corrupt_history() -> None:
-    try:
-        hf = _history_file()
-        ts = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
-        backup = hf.with_suffix(f".json.bak.{ts}")
-        shutil.copyfile(hf, backup)
-        log.warning("history.json 损坏，已备份到 %s", backup)
-    except Exception:
-        log.exception("备份损坏的 history.json 失败")
-
-
-def get_all_history() -> List[Dict[str, Any]]:
-    hf = _history_file()
-    if not hf.exists():
-        return []
-    try:
-        data = json.loads(hf.read_text(encoding="utf-8"))
-        return data if isinstance(data, list) else []
-    except Exception:
-        _backup_corrupt_history()
-        return []
-
-
-def _write_history_atomic(history: List[Dict[str, Any]]) -> None:
-    hf = _history_file()
-    hf.parent.mkdir(parents=True, exist_ok=True)
-    fd, tmp_path = tempfile.mkstemp(dir=str(hf.parent), prefix="history.", suffix=".tmp")
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as f:
-            json.dump(history, f, ensure_ascii=False, indent=2)
-        os.replace(tmp_path, hf)
-    finally:
-        try:
-            if os.path.exists(tmp_path):
-                os.remove(tmp_path)
-        except OSError:
-            pass
-
-
-def add_history_record(record: Dict[str, Any]) -> None:
-    with history_lock:
-        history = get_all_history()
-        history = [h for h in history if h.get("task_id") != record.get("task_id")]
-        history.insert(0, record)
-        _write_history_atomic(history)
-
-
-def remove_history_record(task_id: str) -> Dict[str, Any] | None:
-    with history_lock:
-        history = get_all_history()
-        kept = [h for h in history if h.get("task_id") != task_id]
-        removed = next((h for h in history if h.get("task_id") == task_id), None)
-        if removed is not None:
-            _write_history_atomic(kept)
-        return removed
 
 
 # ----------------- 排队快照：重启不丢 pending 任务 -----------------

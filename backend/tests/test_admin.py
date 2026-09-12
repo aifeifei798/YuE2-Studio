@@ -89,6 +89,15 @@ def test_admin_disk_logs_config(client):
     assert r.json()["updated"]["max_queue"] == 7
     # 非法值被 schema 挡掉
     assert client.put("/api/admin/config", headers=ADMIN_HEADERS, json={"max_queue": 0}).status_code == 422
+    # 配额项热更新
+    r = client.put(
+        "/api/admin/config",
+        headers=ADMIN_HEADERS,
+        json={"submit_per_hour": 50, "max_pending_per_ip": 5},
+    )
+    assert r.json()["updated"] == {"submit_per_hour": 50, "max_pending_per_ip": 5}
+    cfg = client.get("/api/admin/config", headers=ADMIN_HEADERS).json()["config"]
+    assert cfg["submit_per_hour"] == 50 and cfg["max_pending_per_ip"] == 5
 
 
 def test_pending_snapshot_roundtrip():

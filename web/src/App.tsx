@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import Studio from "./pages/Studio";
 import Admin from "./pages/Admin";
+import { ModalProvider } from "./components/Modal";
 import "./styles.css";
 
 function route(): string {
@@ -38,7 +39,7 @@ export default function App() {
   const isAdmin = path.startsWith("/admin");
 
   return (
-    <>
+    <ModalProvider>
       <header className="topbar">
         <div className="brand">YuE2 Studio <span className="badge">Studio + Admin</span></div>
         <nav className="nav">
@@ -51,6 +52,6 @@ export default function App() {
         </div>
       </header>
       {isAdmin ? <Admin /> : <Studio serverState={serverState} refreshServer={refreshServer} />}
-    </>
+    </ModalProvider>
   );
 }

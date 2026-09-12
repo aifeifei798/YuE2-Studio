@@ -22,6 +22,8 @@ class Settings:
         self.port: int = int(_getenv("YUE2_PORT", "8000"))
         self.max_queue: int = int(_getenv("YUE2_MAX_QUEUE", "10"))
         self.submit_per_hour: int = int(_getenv("YUE2_SUBMIT_PER_HOUR", "20"))
+        # 每 IP 最大并存任务数（pending+running），0 = 不限
+        self.max_pending_per_ip: int = int(_getenv("YUE2_MAX_PENDING_PER_IP", "2"))
         self.max_style_len: int = int(_getenv("YUE2_MAX_STYLE", "2000"))
         self.max_lyrics_len: int = int(_getenv("YUE2_MAX_LYRICS", "10000"))
         self.max_title_len: int = int(_getenv("YUE2_MAX_TITLE", "100"))
@@ -54,6 +56,8 @@ class Settings:
             "model_repo": self.model_repo,
             "model_device": self.model_device,
             "max_queue": self.max_queue,
+            "submit_per_hour": self.submit_per_hour,
+            "max_pending_per_ip": self.max_pending_per_ip,
             "max_style_len": self.max_style_len,
             "max_lyrics_len": self.max_lyrics_len,
             "max_title_len": self.max_title_len,

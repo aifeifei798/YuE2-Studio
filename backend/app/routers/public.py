@@ -54,7 +54,7 @@ def healthz():
         "model_loaded": store.model_loaded,
         "model_repo": s.model_repo,
         "queue_pending": store.task_queue.qsize(),
-        "history_count": len(store.get_all_history()),
+        "history_count": store.count_history(),
         "worker_alive": alive,
     }
 
@@ -72,6 +72,12 @@ async def generate_music(req: GenerateRequest, request: Request):
         raise HTTPException(
             status_code=429,
             detail=f"提交过于频繁（每 IP 每小时限 {s.submit_per_hour} 次），请稍后再试",
+        )
+    active = store.count_active_by_ip(ip)
+    if s.max_pending_per_ip > 0 and active >= s.max_pending_per_ip:
+        raise HTTPException(
+            status_code=429,
+            detail=f"该 IP 已有 {active} 个进行中任务（上限 {s.max_pending_per_ip} 个），请等待完成后再提交",
         )
 
     title = req.title.strip() if req.title and req.title.strip() else "未命名歌曲"
@@ -105,9 +111,10 @@ def fetch_task(task_id: str):
         raise HTTPException(status_code=400, detail="非法 task_id")
     task = store.tasks.get(task_id)
     if task is None:
-        for rec in store.get_all_history():
-            if rec.get("task_id") == task_id:
-                return {"task_id": task_id, "status": "succeeded", "record": rec}
+        # 重启后内存丢失但库还在：DB 兜底（无需全量加载）
+        rec = store.get_history_record(task_id)
+        if rec is not None:
+            return {"task_id": task_id, "status": "succeeded", "record": rec}
         raise HTTPException(status_code=404, detail="任务不存在")
     return public_task_view(task)
 
@@ -118,15 +125,9 @@ def fetch_history(
     offset: int = Query(default=0, ge=0),
     q: str = Query(default="", max_length=100),
 ):
-    history = store.get_all_history()
-    keyword = q.strip().lower()
-    if keyword:
-        history = [
-            h
-            for h in history
-            if keyword in str(h.get("title", "")).lower() or keyword in str(h.get("seed", ""))
-        ]
-    total = len(history)
+    keyword = q.strip()
+    total, items = store.query_history(keyword, limit if limit is not None else 200, offset)
+    # 兼容老前端：不带 limit 时直接返回数组
     if limit is None:
-        return history[:200]
-    return {"total": total, "offset": offset, "limit": limit, "items": history[offset : offset + limit]}
+        return items
+    return {"total": total, "offset": offset, "limit": limit, "items": items}

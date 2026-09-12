@@ -31,7 +31,7 @@ def admin_health():
         "model_error": store.model_error,
         "worker_alive": store.worker_alive(),
         "queue_pending": store.task_queue.qsize(),
-        "history_count": len(store.get_all_history()),
+        "history_count": store.count_history(),
     }
 
 
@@ -97,7 +97,7 @@ def admin_disk():
         "audio_count": audio_count,
         "audio_bytes": dir_size(s.audio_dir) if s.audio_dir.exists() else 0,
         "artifacts_bytes": dir_size(s.artifacts_root) if s.artifacts_root.exists() else 0,
-        "history_count": len(store.get_all_history()),
+        "history_count": store.count_history(),
         "queue_pending": store.task_queue.qsize(),
     }
     try:
@@ -127,6 +127,12 @@ def admin_update_config(payload: AdminConfigUpdate):
     if payload.max_queue is not None:
         s.max_queue = payload.max_queue
         updated["max_queue"] = s.max_queue
+    if payload.submit_per_hour is not None:
+        s.submit_per_hour = payload.submit_per_hour
+        updated["submit_per_hour"] = s.submit_per_hour
+    if payload.max_pending_per_ip is not None:
+        s.max_pending_per_ip = payload.max_pending_per_ip
+        updated["max_pending_per_ip"] = s.max_pending_per_ip
     if payload.log_level:
         level = payload.log_level.upper()
         logging.getLogger().setLevel(getattr(logging, level, logging.INFO))
