@@ -453,8 +453,8 @@ export default function Studio(props: { serverState: string; refreshServer: () =
           ))}
         </div>
         <label className="lbl" htmlFor="f-lyrics"><span>歌词 Lyrics</span><span className="count">{lyricLines} 行 · {lyricChars} 字</span></label>
-        <textarea id="f-lyrics" className="in lyrics-box" rows={11} maxLength={limits.lyrics} placeholder="[Verse]&#10;..." value={lyrics} onChange={(e) => setLyrics(e.target.value)} />
-        <div style={{ marginTop: 12 }}>
+        <textarea id="f-lyrics" className="in lyrics-box" rows={8} maxLength={limits.lyrics} placeholder="[Verse]&#10;..." value={lyrics} onChange={(e) => setLyrics(e.target.value)} />
+        <div className="submit-bar">
           <button className={`btn${busy ? " busy" : ""}`} onClick={submit} disabled={busy}>
             {busy ? (busyText || "处理中...") : (<><Wand2 size={16} /> 开始生成全曲</>)}
           </button>
@@ -465,7 +465,7 @@ export default function Studio(props: { serverState: string; refreshServer: () =
       </section>
 
       {/* 中：播放器 */}
-      <section style={{ display: "flex", flexDirection: "column", gap: 12, minWidth: 0 }}>
+      <section className="studio-center" style={{ display: "flex", flexDirection: "column", gap: 12, minWidth: 0 }}>
         <div className="hero">
           <div className="hero-bg">
             {current
@@ -527,7 +527,7 @@ export default function Studio(props: { serverState: string; refreshServer: () =
           </div>
         </div>
 
-        <div className="panel">
+        <div className="panel center-panel">
           <div className="subtabs">
             <button className={centerTab === "profile" ? "on" : ""} onClick={() => setCenterTab("profile")}><Disc3 size={12} style={{ verticalAlign: -2 }} /> 制作档案</button>
             <button className={centerTab === "lyrics" ? "on" : ""} onClick={() => setCenterTab("lyrics")}><FileText size={12} style={{ verticalAlign: -2 }} /> 歌词</button>
@@ -559,7 +559,7 @@ export default function Studio(props: { serverState: string; refreshServer: () =
       </section>
 
       {/* 右：历史 */}
-      <section className="panel" style={{ minWidth: 0 }}>
+      <section className="panel studio-right" style={{ minWidth: 0 }}>
         <div className="section-title">
           <h3 style={{ margin: 0 }}><ListMusic size={15} /> 创作历史 ({total})</h3>
         </div>
@@ -591,7 +591,7 @@ export default function Studio(props: { serverState: string; refreshServer: () =
           <Search size={13} style={{ position: "absolute", left: 11, top: 11, color: "#475569" }} />
           <input className="in" placeholder="搜索歌名或 Seed..." value={query} onChange={(e) => { setQuery(e.target.value); setPage(0); }} style={{ paddingLeft: 30 }} />
         </div>
-        <div style={{ marginTop: 10 }}>
+        <div className="hist-scroll">
           {histLoading && history.length === 0 && (<><div className="skel" /><div className="skel" /><div className="skel" /></>)}
           {!histLoading && history.length === 0 && (
             <EmptyState emoji="🎼" title="还没有作品" sub={query ? "换个关键词试试" : "左侧写好词曲，点生成开始第一首"} />
