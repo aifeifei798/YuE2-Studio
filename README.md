@@ -70,7 +70,7 @@ docker compose down                   # 停服（outputs 卷保留，音频/历�
 
 1. `.env` 里 `CORS_ORIGINS` 改为你的真实域名（逗号分隔），不要用 `*`。直连 api 调试时浏览器预检需要 `PATCH` + `X-API-Key` 头（已在 CORS 放行）。
 2. 前面再架一层反代（Caddy/Nginx/云 LB）做 HTTPS，把 443 转到本机 80；不要把 api 的 8000 直接暴露到公网。
-3. 公网建议打开 `REQUIRE_API_KEY`（或管理页勾选）：匿名一律 401，必须登录才能生成。登录用户走 Key 配额，不再受每 IP 并存数限制。
+3. 默认已强制登录（`REQUIRE_API_KEY=true`）：匿名一律 401，必须登录才能生成。登录用户走 Key 配额 + 每用户并存上限，不再受每 IP 并存数限制。
 
 ### 单镜像（单机最省，不用 compose）
 
@@ -116,6 +116,7 @@ docker compose pull && docker compose up -d   # 注意：不要再加 --build
 | GET/PUT | `/api/admin/config` | 查看/热更新 `max_queue, submit_per_hour, max_pending_per_ip, require_api_key, log_level`（重启后以 env 为准） |
 | GET | `/api/admin/keys` | Key 列表（只显示前缀，不含哈希与明文） |
 | POST | `/api/admin/keys` | 新建 Key `{name, quota_total, note}`，明文 `api_key` 只返回一次 |
+| POST | `/api/admin/keys/{id}/reset` | 换 Key：旧 Key 立即失效，明文只返回一次，配额/历史保留 |
 | PATCH/DELETE | `/api/admin/keys/{id}` | 改配额/启停/备注；删 Key（其历史歌曲保留归属名） |
 | GET | `/api/admin/keys/{id}/history` | 该 Key 的歌 |
 | POST | `/api/auth/login` | 用户登录 `{username, key}`，返回配额视图 |
@@ -123,8 +124,8 @@ docker compose pull && docker compose up -d   # 注意：不要再加 --build
 
 `POST /api/generate`：`title(≤100) / style(1~2000) / lyrics(1~10000) / cot(full|none) / seed(0~2^31-1, null=随机)`（上限取后端配置，前端经 `/api/config` 动态取，不再硬编码）。
 配额（429 时看返回文案区分）：全局排队上限 `YUE2_MAX_QUEUE`；每 IP 每小时提交数 `YUE2_SUBMIT_PER_HOUR`（0=不限，配额/IP 挡掉的不计数）；
-匿名每 IP 并存任务数 `YUE2_MAX_PENDING_PER_IP`（pending+running，0=不限；登录用户走 Key 配额，不再叠加 IP 限制）；Key 配额（成功生成的首数，`/me` 的 `quota_left` 已扣在途）。
-前三者 + `REQUIRE_API_KEY` 都可在管理页 config 标签热更新。
+匿名每 IP 并存任务数 `YUE2_MAX_PENDING_PER_IP`（pending+running，0=不限；登录用户走 Key 配额，不再叠加 IP 限制）；每用户并存任务数 `YUE2_MAX_PENDING_PER_KEY`（pending+running，0=不限，防一人塞满队列）；Key 配额（成功生成的首数，`/me` 的 `quota_left` 已扣在途）。
+前三者 + `REQUIRE_API_KEY` 都可在管理页 config 标签热更新。默认 `REQUIRE_API_KEY=true`（强制登录），匿名一律 401。
 
 ## 用户体系（API Key）
 
@@ -133,8 +134,8 @@ docker compose pull && docker compose up -d   # 注意：不要再加 --build
 1. 管理员在 `#/admin` → keys 标签新建 Key：填用户名、配额（可生成首数，0=不限）、备注，明文 Key 只显示一次，立即复制发给用户。
 2. 用户登录后：生成自动记到名下并扣配额（**只有成功生成的才计**，失败/取消不计；在途占用配额，`/me` 的 `quota_left` 已扣在途），历史列表可切“只看我的”，配额条实时显示已用/总量。
 3. 管理员可随时改配额、停用、删除 Key，看每个 Key 的注册时间、最后使用时间、做了几首歌、歌曲列表。删 Key 不删歌（归属名保留）。
-4. 库里只存 Key 的 SHA256 哈希，明文无法找回；用户丢 Key 只能删了重建。
-5. 公网建议打开 `REQUIRE_API_KEY`（或管理页勾选）：匿名一律 401，必须登录才能生成。
+4. 库里只存 Key 的 SHA256 哈希，明文无法找回；用户丢 Key 点“换Key”发个新的（旧 Key 立即失效，配额与历史不变）。
+5. 默认 `REQUIRE_API_KEY=true`（强制登录）：匿名一律 401，必须登录才能生成；内网自用可在管理页关掉。
 
 ## 数据
 

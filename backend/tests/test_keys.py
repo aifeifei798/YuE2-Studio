@@ -160,6 +160,87 @@ def test_require_api_key_mode(client):
         s.require_api_key = old
 
 
+def test_require_api_key_default_true(monkeypatch):
+    """生产默认强制登录：不设 env 时即为 true。"""
+    import os
+
+    from backend.app.core.config import reload_settings
+
+    monkeypatch.delenv("REQUIRE_API_KEY", raising=False)
+    assert os.getenv("REQUIRE_API_KEY") is None
+    assert reload_settings().require_api_key is True
+
+
+def test_key_pending_limit(client, monkeypatch):
+    """每 Key 并存上限：1 个在途时第二个被拒（配额不限，只看并存数）。"""
+    gate = threading.Event()
+    real = queue_mod.run_generation
+
+    def blocking(task):
+        gate.wait(timeout=15)
+        return real(task)
+
+    monkeypatch.setattr(queue_mod, "run_generation", blocking)
+    from backend.app.core.config import get_settings
+
+    s = get_settings()
+    old_key_quota = s.max_pending_per_key
+    s.max_pending_per_key = 1
+    try:
+        created = _make_key(client, "gail", quota=0)
+        h = _kh("gail", created["api_key"])
+        payload = {"title": "t", "style": "pop", "lyrics": "la", "cot": "full", "seed": 1}
+
+        first = client.post("/api/generate", headers=h, json=payload).json()["task_id"]
+        deadline = time.time() + 10
+        while client.get(f"/api/tasks/{first}").json()["status"] != "running" and time.time() < deadline:
+            time.sleep(0.1)
+        r = client.post("/api/generate", headers=h, json=payload)
+        assert r.status_code == 429
+        assert "进行中" in r.json()["detail"]
+        gate.set()
+        assert wait_status(client, first)["status"] == "succeeded"
+        # 空闲后可再次提交
+        tid2 = client.post("/api/generate", headers=h, json=payload).json()["task_id"]
+        assert wait_status(client, tid2)["status"] == "succeeded"
+    finally:
+        s.max_pending_per_key = old_key_quota
+        gate.set()
+
+
+def test_reset_key(client):
+    """换 Key：旧 Key 立即失效，新 Key 可用，配额已用数与历史保留。"""
+    created = _make_key(client, "hank", quota=10)
+    old_secret = created["api_key"]
+    h_old = _kh("hank", old_secret)
+    payload = {"title": "换key歌", "style": "s", "lyrics": "l", "cot": "full", "seed": 1}
+
+    tid = client.post("/api/generate", headers=h_old, json=payload).json()["task_id"]
+    assert wait_status(client, tid)["status"] == "succeeded"
+
+    kid = next(x["id"] for x in client.get("/api/admin/keys", headers=ADMIN_HEADERS).json()["items"] if x["name"] == "hank")
+    r = client.post(f"/api/admin/keys/{kid}/reset", headers=ADMIN_HEADERS)
+    assert r.status_code == 200
+    body = r.json()
+    assert body["api_key"].startswith("sk-") and body["api_key"] != old_secret
+    assert body["key_prefix"] == body["api_key"][:10]
+    assert "key_hash" not in str(body)
+
+    # 旧 Key 登录/生成都被拒
+    assert client.post("/api/auth/login", json={"username": "hank", "key": old_secret}).status_code == 401
+    assert client.post("/api/generate", headers=h_old, json=payload).status_code == 401
+    # 新 Key 好用，且已用配额保留
+    h_new = _kh("hank", body["api_key"])
+    me = client.post("/api/auth/login", json={"username": "hank", "key": body["api_key"]}).json()
+    assert me["ok"] is True and me["quota_used"] == 1
+    mine = client.get("/api/auth/history", headers=h_new, params={"limit": 20}).json()
+    assert mine["total"] == 1 and mine["items"][0]["task_id"] == tid
+    # 不存在的 Key 返回 404
+    assert client.post("/api/admin/keys/999999/reset", headers=ADMIN_HEADERS).status_code == 404
+    # 未鉴权换不了
+    assert client.post(f"/api/admin/keys/{kid}/reset").status_code == 401
+
+
 def test_owner_column_migrates_on_old_db(tmp_path):
     import sqlite3
 

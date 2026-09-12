@@ -93,11 +93,11 @@ def test_admin_disk_logs_config(client):
     r = client.put(
         "/api/admin/config",
         headers=ADMIN_HEADERS,
-        json={"submit_per_hour": 50, "max_pending_per_ip": 5},
+        json={"submit_per_hour": 50, "max_pending_per_ip": 5, "max_pending_per_key": 3},
     )
-    assert r.json()["updated"] == {"submit_per_hour": 50, "max_pending_per_ip": 5}
+    assert r.json()["updated"] == {"submit_per_hour": 50, "max_pending_per_ip": 5, "max_pending_per_key": 3}
     cfg = client.get("/api/admin/config", headers=ADMIN_HEADERS).json()["config"]
-    assert cfg["submit_per_hour"] == 50 and cfg["max_pending_per_ip"] == 5
+    assert cfg["submit_per_hour"] == 50 and cfg["max_pending_per_ip"] == 5 and cfg["max_pending_per_key"] == 3
 
 
 def test_pending_snapshot_roundtrip():

@@ -33,6 +33,7 @@ export default function Admin() {
   const [maxQueue, setMaxQueue] = useState("10");
   const [submitPerHour, setSubmitPerHour] = useState("20");
   const [maxPendingPerIp, setMaxPendingPerIp] = useState("2");
+  const [maxPendingPerKey, setMaxPendingPerKey] = useState("2");
   const [requireKey, setRequireKey] = useState(false);
   const [err, setErr] = useState("");
   const modal = useModal();
@@ -70,6 +71,7 @@ export default function Admin() {
           if (d.config.max_queue !== undefined) setMaxQueue(String(d.config.max_queue));
           if (d.config.submit_per_hour !== undefined) setSubmitPerHour(String(d.config.submit_per_hour));
           if (d.config.max_pending_per_ip !== undefined) setMaxPendingPerIp(String(d.config.max_pending_per_ip));
+          if (d.config.max_pending_per_key !== undefined) setMaxPendingPerKey(String(d.config.max_pending_per_key));
           if (d.config.require_api_key !== undefined) setRequireKey(d.config.require_api_key === true);
         }
       }
@@ -124,6 +126,7 @@ export default function Admin() {
     const mq = Number(maxQueue);
     const sph = Number(submitPerHour);
     const ppi = Number(maxPendingPerIp);
+    const ppk = Number(maxPendingPerKey);
     if (!Number.isInteger(mq) || mq < 1 || mq > 100) {
       await modal.alert("max_queue 必须是 1~100 的整数");
       return;
@@ -139,6 +142,11 @@ export default function Admin() {
       return;
     }
     body.max_pending_per_ip = ppi;
+    if (!Number.isInteger(ppk) || ppk < 0 || ppk > 100) {
+      await modal.alert("max_pending_per_key 必须是不超过 100 的整数（0 表示不限）");
+      return;
+    }
+    body.max_pending_per_key = ppk;
     body.require_api_key = requireKey;
     try {
       await apiFetch("/api/admin/config", {
@@ -231,6 +239,17 @@ export default function Admin() {
     }
   }
 
+  async function resetKey(id: number, name: string) {
+    if (!(await modal.confirm(`给「${name}」换一个新的 Key？旧 Key 立即失效，配额与历史保留。新 Key 只显示一次，请立即发给用户。`))) return;
+    try {
+      const res = await apiFetch<{ api_key: string }>(`/api/admin/keys/${id}/reset`, { method: "POST" }, true);
+      setCreatedSecret(res.api_key);
+      load();
+    } catch (e) {
+      await modal.alert((e as Error).message);
+    }
+  }
+
   if (!authed) {
     return (
       <div className="layout" style={{ maxWidth: 480 }}>
@@ -304,8 +323,10 @@ export default function Admin() {
             <input id="cfg-max-queue" className="in" inputMode="numeric" value={maxQueue} onChange={(e) => setMaxQueue(e.target.value)} />
             <label className="lbl" htmlFor="cfg-submit">submit_per_hour：每 IP 每小时提交次数（0=不限）</label>
             <input id="cfg-submit" className="in" inputMode="numeric" value={submitPerHour} onChange={(e) => setSubmitPerHour(e.target.value)} />
-            <label className="lbl" htmlFor="cfg-per-ip">max_pending_per_ip：每 IP 最大并存任务数（0=不限）</label>
+            <label className="lbl" htmlFor="cfg-per-ip">max_pending_per_ip：匿名每 IP 最大并存任务数（0=不限）</label>
             <input id="cfg-per-ip" className="in" inputMode="numeric" value={maxPendingPerIp} onChange={(e) => setMaxPendingPerIp(e.target.value)} />
+            <label className="lbl" htmlFor="cfg-per-key">max_pending_per_key：每用户最大并存任务数（0=不限，防一人塞满队列）</label>
+            <input id="cfg-per-key" className="in" inputMode="numeric" value={maxPendingPerKey} onChange={(e) => setMaxPendingPerKey(e.target.value)} />
             <label className="lbl" htmlFor="cfg-require-key" style={{ display: "flex", alignItems: "center", gap: 8 }}>
               <input
                 id="cfg-require-key"
@@ -315,7 +336,7 @@ export default function Admin() {
               />
               require_api_key：强制登录后才能生成（防公网滥用）
             </label>
-            <div className="hint">热更新立即生效；重启后以环境变量为准。有 Key 体系后“用户”指 Key，无 Key 的匿名提交仍按 IP 限流。</div>
+            <div className="hint">热更新立即生效；重启后以环境变量为准。登录用户走 Key 配额 + 每用户并存上限，不再叠加 IP 限制。</div>
             <div style={{ marginTop: 8 }}><button className="btn ghost" onClick={saveConfig}>保存</button></div>
           </>
         )}
@@ -357,6 +378,7 @@ export default function Admin() {
                     <td>{k.created_at}</td>
                     <td style={{ whiteSpace: "nowrap" }}>
                       <button className="mini" onClick={() => selectKey(k)}>管理</button>{" "}
+                      <button className="mini" onClick={() => resetKey(k.id, k.name)}>换Key</button>{" "}
                       <button className="mini danger" onClick={() => delKey(k.id, k.name)}>删</button>
                     </td>
                   </tr>

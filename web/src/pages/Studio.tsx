@@ -58,11 +58,11 @@ export default function Studio(props: { serverState: string; refreshServer: () =
       window.removeEventListener("storage", sync);
     };
   }, []);
-  // 长度上限走后端 /api/config，前端不再硬编码（兜底值为当前默认）
-  const [limits, setLimits] = useState({ title: 100, style: 2000, lyrics: 10000 });
+  // 长度上限与登录开关走后端 /api/config，前端不再硬编码（兜底值为当前默认）
+  const [limits, setLimits] = useState({ title: 100, style: 2000, lyrics: 10000, requireKey: false });
   useEffect(() => {
     apiFetch<PublicConfig>("/api/config")
-      .then((c) => setLimits({ title: c.max_title_len, style: c.max_style_len, lyrics: c.max_lyrics_len }))
+      .then((c) => setLimits({ title: c.max_title_len, style: c.max_style_len, lyrics: c.max_lyrics_len, requireKey: c.require_api_key }))
       .catch(() => undefined);
   }, []);
   const audioRef = useRef<HTMLAudioElement>(null);
@@ -273,6 +273,11 @@ export default function Studio(props: { serverState: string; refreshServer: () =
   }
 
   async function submit() {
+    // 强制登录站点：未登录直接提示，不发请求
+    if (limits.requireKey && !getUserCreds()) {
+      await modal.alert("本站点要求登录后才能生成，请先在右侧用用户名 + Key 登录（找管理员领取）。");
+      return;
+    }
     let seedNum: number | null = null;
     if (seed.trim() !== "") {
       // Number("1e3") 会绕过整数校验，必须纯数字正则先行
@@ -348,6 +353,7 @@ export default function Studio(props: { serverState: string; refreshServer: () =
         <div style={{ marginTop: 10 }}>
           <button className="btn" onClick={submit}>{busy ? busyText || "处理中..." : "开始生成全曲"}</button>
           <div className="hint">多人共享显卡时自动排队，可连续提交多首；草稿自动保存在本机。状态：{props.serverState}</div>
+          {limits.requireKey && !user && <div className="hint">本站点需登录后才能生成，请先在右侧登录。</div>}
         </div>
       </section>
 

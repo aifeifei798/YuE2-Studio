@@ -88,6 +88,14 @@ async def generate_music(req: GenerateRequest, request: Request):
                 status_code=429,
                 detail=f"该 Key 配额已用完（{key_row['used_count']}/{key_row['quota_total']} 首），请联系管理员",
             )
+    # 每 Key 并存上限：防单个用户一次提交几十个塞满全局队列（0=不限）
+    if key_row is not None and s.max_pending_per_key > 0:
+        active_key = store.count_active_by_key(key_row["id"])
+        if active_key >= s.max_pending_per_key:
+            raise HTTPException(
+                status_code=429,
+                detail=f"该用户已有 {active_key} 个进行中任务（上限 {s.max_pending_per_key} 个），请等待完成后再提交",
+            )
     # 已登录（Key）用户按 Key 配额限流，不再叠加 IP 并存限制；
     # 匿名提交仍按 IP 限流（无账号体系下 IP 即用户）
     if key_row is None and s.max_pending_per_ip > 0:
@@ -141,6 +149,7 @@ def public_config():
         "max_lyrics_len": s.max_lyrics_len,
         "require_api_key": s.require_api_key,
         "max_queue": s.max_queue,
+        "max_pending_per_key": s.max_pending_per_key,
     }
 
 

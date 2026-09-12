@@ -362,6 +362,22 @@ def delete_key(key_id: int, path: Optional[Path] = None) -> bool:
         return cur.rowcount > 0
 
 
+def regenerate_key_secret(key_id: int, path: Optional[Path] = None) -> Tuple[Dict[str, Any], str]:
+    """换 Key：生成新 secret，旧的立即失效；配额/历史不受影响。Key 不存在抛 ValueError。"""
+    secret = "sk-" + secrets.token_hex(16)
+    with _lock, _connect(path) as con:
+        row = con.execute("SELECT * FROM api_keys WHERE id=?", (key_id,)).fetchone()
+        if row is None:
+            raise ValueError("Key 不存在")
+        con.execute(
+            "UPDATE api_keys SET key_hash=?, key_prefix=? WHERE id=?",
+            (_hash_key(secret), secret[:10], key_id),
+        )
+        con.commit()
+        row = con.execute("SELECT * FROM api_keys WHERE id=?", (key_id,)).fetchone()
+        return _key_to_dict(row), secret
+
+
 def increment_used(key_id: int, path: Optional[Path] = None) -> None:
     """成功生成一首后计数（失败/取消不计）。"""
     with _lock, _connect(path) as con:

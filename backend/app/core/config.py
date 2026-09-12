@@ -35,16 +35,18 @@ class Settings:
         self.port: int = int(_getenv("YUE2_PORT", "8000"))
         self.max_queue: int = int(_getenv("YUE2_MAX_QUEUE", "10"))
         self.submit_per_hour: int = int(_getenv("YUE2_SUBMIT_PER_HOUR", "20"))
-        # 每 IP 最大并存任务数（pending+running），0 = 不限
+        # 每 IP 最大并存任务数（pending+running），0 = 不限（仅匿名提交走此限制）
         self.max_pending_per_ip: int = int(_getenv("YUE2_MAX_PENDING_PER_IP", "2"))
+        # 每 Key 最大并存任务数（pending+running），0 = 不限（防单个用户塞满全局队列）
+        self.max_pending_per_key: int = int(_getenv("YUE2_MAX_PENDING_PER_KEY", "2"))
         self.max_style_len: int = int(_getenv("YUE2_MAX_STYLE", "2000"))
         self.max_lyrics_len: int = int(_getenv("YUE2_MAX_LYRICS", "10000"))
         self.max_title_len: int = int(_getenv("YUE2_MAX_TITLE", "100"))
         self.log_level: str = _getenv("LOG_LEVEL", "INFO").upper()
         # 管理口令：为空表示禁用 /api/admin/*（默认禁用最安全）
         self.admin_token: str = _getenv("ADMIN_TOKEN", "")
-        # 为 true 时生成接口必须带有效 API Key（防公网滥用），默认匿名可用
-        self.require_api_key: bool = _getenv("REQUIRE_API_KEY", "false").strip().lower() in ("1", "true", "yes", "on")
+        # 为 true 时生成接口必须带有效 API Key（防公网滥用），默认强制登录
+        self.require_api_key: bool = _getenv("REQUIRE_API_KEY", "true").strip().lower() in ("1", "true", "yes", "on")
         raw = _getenv("CORS_ORIGINS", "http://127.0.0.1:8000,http://localhost:8000")
         self.cors_origins: list[str] = [o.strip() for o in raw.split(",") if o.strip()]
         self.allow_credentials: bool = "*" not in self.cors_origins
@@ -73,6 +75,7 @@ class Settings:
             "max_queue": self.max_queue,
             "submit_per_hour": self.submit_per_hour,
             "max_pending_per_ip": self.max_pending_per_ip,
+            "max_pending_per_key": self.max_pending_per_key,
             "require_api_key": self.require_api_key,
             "max_style_len": self.max_style_len,
             "max_lyrics_len": self.max_lyrics_len,

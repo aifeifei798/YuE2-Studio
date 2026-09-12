@@ -18,6 +18,8 @@ os.environ["YUE2_OUTPUT_DIR"] = str(_OUT)
 os.environ["ADMIN_TOKEN"] = "test-admin-token"
 os.environ["YUE2_SUBMIT_PER_HOUR"] = "100"
 os.environ["CORS_ORIGINS"] = "http://127.0.0.1:8000,http://localhost:8000"
+# 生产默认强制登录；测试里匿名用例多，此处显式关闭（单测 test_require_api_key_* 覆盖开启逻辑）
+os.environ["REQUIRE_API_KEY"] = "false"
 
 _fake = types.ModuleType("yue2")
 

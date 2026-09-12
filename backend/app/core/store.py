@@ -35,6 +35,7 @@ from .history_db import (
     query_history,
     remove_history_record,
     update_key,
+    regenerate_key_secret,
     verify_api_key,
 )
 
@@ -73,6 +74,7 @@ __all__ = [
     "clear_keys",
     "update_key",
     "delete_key",
+    "regenerate_key_secret",
     "increment_used",
     "save_pending_snapshot",
     "load_pending_snapshot",

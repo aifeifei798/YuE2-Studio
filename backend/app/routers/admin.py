@@ -146,6 +146,9 @@ def admin_update_config(payload: AdminConfigUpdate):
     if payload.max_pending_per_ip is not None:
         s.max_pending_per_ip = payload.max_pending_per_ip
         updated["max_pending_per_ip"] = s.max_pending_per_ip
+    if payload.max_pending_per_key is not None:
+        s.max_pending_per_key = payload.max_pending_per_key
+        updated["max_pending_per_key"] = s.max_pending_per_key
     if payload.require_api_key is not None:
         s.require_api_key = payload.require_api_key
         updated["require_api_key"] = s.require_api_key
@@ -187,6 +190,17 @@ def admin_update_key(key_id: int, payload: KeyUpdate):
         raise HTTPException(status_code=404, detail="Key 不存在")
     log.info("🔑 管理员更新 Key[id=%d] %s", key_id, payload.model_dump(exclude_none=True))
     return row
+
+
+@router.post("/keys/{key_id}/reset")
+def admin_reset_key(key_id: int):
+    """换 Key：旧 secret 立即失效，新明文只返回这一次；配额已用数/历史归属保留。"""
+    try:
+        row, secret = store.regenerate_key_secret(key_id)
+    except ValueError:
+        raise HTTPException(status_code=404, detail="Key 不存在")
+    log.info("🔑 管理员重置 Key[id=%d]（旧 Key 已失效）", key_id)
+    return {**row, "api_key": secret}
 
 
 @router.delete("/keys/{key_id}")

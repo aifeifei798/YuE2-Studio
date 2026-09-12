@@ -54,6 +54,7 @@ export interface PublicConfig {
   max_lyrics_len: number;
   require_api_key: boolean;
   max_queue: number;
+  max_pending_per_key: number;
 }
 
 const USER_KEY = "yue2-user";
