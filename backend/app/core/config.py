@@ -1,4 +1,9 @@
-"""集中配置：全部可用环境变量覆盖，方便单机 / compose / 公网部署。"""
+"""集中配置：全部可用环境变量覆盖，方便单机 / compose / 公网部署。
+
+加载顺序（后者优先）：默认值 < 仓库根 `.env` < 真实环境变量。
+本地直接 `uvicorn` 运行时自动读 `.env`；compose 经 `env_file` 注入的
+真实环境变量不受 `.env` 覆盖。
+"""
 from __future__ import annotations
 
 import os
@@ -7,6 +12,14 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 BACKEND_DIR = Path(__file__).resolve().parents[2]
+
+try:
+    from dotenv import load_dotenv
+
+    # override=False：已存在的真实环境变量优先，绝不覆盖
+    load_dotenv(REPO_ROOT / ".env", override=False)
+except ImportError:  # 极简环境没装 dotenv 时退化为纯环境变量
+    pass
 
 
 def _getenv(name: str, default: str) -> str:

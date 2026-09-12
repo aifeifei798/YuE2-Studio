@@ -13,7 +13,7 @@ FastAPI（GPU）+ Vite+React（Studio/Admin）的前后端分离作曲工作台�
 
 ```bash
 pip install -r requirements.txt          # 转发到 backend/requirements.txt
-cp .env.example .env                    # 填 ADMIN_TOKEN（管理页登录用）
+cp .env.example .env                    # 填 ADMIN_TOKEN（管理页登录用）；后端启动时自动加载仓库根 .env，真实环境变量优先
 uvicorn backend.app.main:app --host 0.0.0.0 --port 8000 --workers 1
 cd web && npm install && npm run build  # 产物 web/dist 由后端同服（all-in-one 镜像内自动构建）
 cd web && npm install && npm run dev    # 前端 dev：http://127.0.0.1:5173

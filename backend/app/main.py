@@ -47,6 +47,10 @@ async def lifespan(app: FastAPI):
     # 显式定级：basicConfig 在 root 已有 handler 时是空操作（如 pytest/uvicorn 接管），
     # 不显式 setLevel 会导致 INFO 日志到不了内存环
     logging.getLogger("yue2-studio").setLevel(getattr(logging, s.log_level, logging.INFO))
+    if s.admin_token:
+        log.info("管理接口已启用")
+    else:
+        log.warning("管理接口未启用（ADMIN_TOKEN 为空；本地运行时检查仓库根 .env 是否存在并已重启）")
 
     migrate_legacy_flat_outputs()
     cleanup_tmp_files()
