@@ -248,14 +248,23 @@ def cleanup_tmp_files() -> None:
     """清掉上次崩溃残留的 *.tmp 音频/快照临时文件。"""
     s = get_settings()
     # 精确匹配：只清音频半成品与快照半成品，不碰其它 .tmp
-    for tmp in list(s.audio_dir.glob("*.flac.tmp")) if s.audio_dir.exists() else []:
-        try:
-            tmp.unlink()
-            log.info("清理残留临时文件 %s", tmp.name)
-        except OSError:
-            pass
+    # （*.flac.tmp 是历史版本的残留模式，一并兼容清理）
+    audio_patterns = ("*.flac.tmp", "*.writing.flac")
+    if s.audio_dir.exists():
+        for pat in audio_patterns:
+            for tmp in s.audio_dir.glob(pat):
+                try:
+                    tmp.unlink()
+                    log.info("清理残留临时文件 %s", tmp.name)
+                except OSError:
+                    pass
     if s.output_dir.exists():
-        for tmp in list(s.output_dir.glob("pending.*.snapwriting")) + list(s.output_dir.glob("*.tmp")):
+        leftovers = (
+            list(s.output_dir.glob("pending.*.snapwriting"))
+            + list(s.output_dir.glob("*.tmp"))
+            + list(s.output_dir.glob("*.writing.flac"))
+        )
+        for tmp in leftovers:
             try:
                 # 快照正式文件 pending.json 永不删除
                 if tmp.name == "pending.json":

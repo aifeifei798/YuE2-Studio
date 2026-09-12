@@ -38,6 +38,7 @@ def test_generate_full_flow(client):
     a = client.get(rec["audio_url"])
     assert a.status_code == 200 and len(a.content) > 0
     assert not list(get_settings().audio_dir.glob("*.tmp"))
+    assert not list(get_settings().output_dir.glob("*.writing.flac"))
 
     # 任务完成后排队快照最终应为空（worker 落盘与状态更新有微秒级竞态，轮询确认）
     import time

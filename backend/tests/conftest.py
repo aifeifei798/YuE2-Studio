@@ -24,6 +24,8 @@ _fake = types.ModuleType("yue2")
 
 class DummySong:
     def save(self, p):
+        # 与真实 yue2 pipeline.save 一致：只接受 .flac/.wav 后缀
+        assert str(p).lower().endswith((".flac", ".wav")), f"非法音频后缀: {p}"
         Path(p).write_bytes(b"FAKEFLAC")
 
     def save_artifacts(self, d):

@@ -45,8 +45,11 @@ def run_generation(task: Dict[str, Any]) -> Dict[str, Any]:
         seed=task["seed"],
     )
     s.audio_dir.mkdir(parents=True, exist_ok=True)
-    # 先写临时文件再原子改名：播放器永远不会读到半截写入中的 flac
-    tmp_path = file_path.with_suffix(".flac.tmp")
+    # 先写临时文件再原子改名：播放器永远不会读到半截写入中的 flac。
+    # tmp 必须以 .flac 结尾（yue2 save() 按 path.suffix 校验后缀），
+    # 且放在非静态的 output_dir，写一半的文件不会被 /audio 暴露出去；
+    # 同卷内 os.replace 保证原子性
+    tmp_path = s.output_dir / f"{task_id}.writing.flac"
     song.save(str(tmp_path))
     os.replace(tmp_path, file_path)
     try:
@@ -70,6 +73,9 @@ def run_generation(task: Dict[str, Any]) -> Dict[str, Any]:
 def cleanup_task_files(task_id: str) -> None:
     s = get_settings()
     try:
+        writing = s.output_dir / f"{task_id}.writing.flac"
+        if writing.exists():
+            writing.unlink()
         flac = s.audio_dir / f"{task_id}.flac"
         if flac.exists():
             flac.unlink()
