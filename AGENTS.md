@@ -21,6 +21,7 @@ FastAPI (GPU) + Vite+React 前后端分离作曲工作台。单卡串行生成�
 - 取消任务只对排队中有效，运行中返回 409（GPU 不可抢占）。
 - 删除歌曲只有管理端（`DELETE /api/admin/history`，Studio 页登录后才显示按钮）；公开 `/healthz` 无敏感字段，模型错误原文只在 `GET /api/admin/health`。
 - `POST /api/generate` 按 IP 限流（`YUE2_SUBMIT_PER_HOUR`，nginx 透传 `X-Forwarded-For`）；另有每 IP 并存任务上限 `YUE2_MAX_PENDING_PER_IP`（pending+running，无账号体系下 IP 即用户）；两者都可在管理页 config 热更新。
+- 用户体系是 API Key（`api_keys` 表，只存 SHA256，明文仅创建时返回一次）：凭证格式 `X-API-Key: 用户名:secret`；配额按**成功生成数**计（失败不计），`used + 在途 >= quota` 即 429；`REQUIRE_API_KEY=true` 时匿名 401；歌曲归属记 `records.owner`，删 Key 不删歌。
 - 排队快照 `outputs/pending.json`，重启自动恢复 pending 任务。
 
 ## 验证（pytest + tsc + compose config，CI 同款）

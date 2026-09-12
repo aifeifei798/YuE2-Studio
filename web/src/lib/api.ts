@@ -7,6 +7,7 @@ export interface HistoryRecord {
   cot: string;
   audio_url: string;
   created_at: string;
+  owner?: string | null;
 }
 
 export interface TaskView {
@@ -31,11 +32,57 @@ export function setAdminToken(t: string) {
   else localStorage.removeItem(TOKEN_KEY);
 }
 
-export async function apiFetch<T>(path: string, options: RequestInit = {}, admin = false): Promise<T> {
+export interface UserCreds {
+  username: string;
+  key: string;
+}
+
+export interface QuotaInfo {
+  name: string;
+  quota_total: number;
+  quota_used: number;
+  quota_left: number | null;
+  enabled: boolean;
+  created_at: string;
+  last_used_at: string;
+}
+
+const USER_KEY = "yue2-user";
+
+export function getUserCreds(): UserCreds | null {
+  try {
+    const raw = localStorage.getItem(USER_KEY);
+    if (!raw) return null;
+    const d = JSON.parse(raw);
+    if (d.username && d.key) return { username: d.username, key: d.key };
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+export function setUserCreds(username: string, key: string) {
+  localStorage.setItem(USER_KEY, JSON.stringify({ username, key }));
+}
+
+export function clearUserCreds() {
+  localStorage.removeItem(USER_KEY);
+}
+
+export async function apiFetch<T>(
+  path: string,
+  options: RequestInit = {},
+  admin = false,
+  user = false,
+): Promise<T> {
   const headers: Record<string, string> = { ...(options.headers as Record<string, string> || {}) };
   if (admin) {
     const tok = getAdminToken();
     if (tok) headers["Authorization"] = `Bearer ${tok}`;
+  }
+  if (user) {
+    const creds = getUserCreds();
+    if (creds) headers["X-API-Key"] = `${creds.username}:${creds.key}`;
   }
   const res = await fetch(path, { ...options, headers });
   if (!res.ok) {

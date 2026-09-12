@@ -11,6 +11,7 @@ from ..core import store
 from ..core.config import get_settings
 from ..core.store import TASK_ID_RE
 from ..models.schemas import GenerateRequest, TaskCreateResponse
+from .auth import parse_key_header
 
 router = APIRouter()
 
@@ -68,11 +69,30 @@ async def generate_music(req: GenerateRequest, request: Request):
     if store.task_queue.qsize() >= s.max_queue:
         raise HTTPException(status_code=429, detail=f"当前排队任务已满（{s.max_queue}），请稍后再试")
     ip = client_ip(request)
+    # Key 鉴权（可选）：带 X-API-Key 则校验并记配额；REQUIRE_API_KEY 开启时匿名直接 401
+    key_row = None
+    parsed = parse_key_header(request)
+    if parsed is not None:
+        name, secret = parsed
+        key_row = store.verify_api_key(name, secret)
+        if key_row is None:
+            raise HTTPException(status_code=401, detail="用户名或 Key 错误")
+        if not key_row["enabled"]:
+            raise HTTPException(status_code=403, detail="该 Key 已被管理员停用")
+    elif s.require_api_key:
+        raise HTTPException(status_code=401, detail="本站点要求登录后才能生成（用户名 + Key）")
     if not store.check_submit_rate(ip, s.submit_per_hour):
         raise HTTPException(
             status_code=429,
             detail=f"提交过于频繁（每 IP 每小时限 {s.submit_per_hour} 次），请稍后再试",
         )
+    if key_row is not None and key_row["quota_total"] > 0:
+        used = key_row["used_count"] + store.count_active_by_key(key_row["id"])
+        if used >= key_row["quota_total"]:
+            raise HTTPException(
+                status_code=429,
+                detail=f"该 Key 配额已用完（{key_row['used_count']}/{key_row['quota_total']} 首），请联系管理员",
+            )
     active = store.count_active_by_ip(ip)
     if s.max_pending_per_ip > 0 and active >= s.max_pending_per_ip:
         raise HTTPException(
@@ -93,6 +113,8 @@ async def generate_music(req: GenerateRequest, request: Request):
         "status": "pending",
         "created_at": store.now_str(),
         "client": ip,
+        "key_id": key_row["id"] if key_row is not None else None,
+        "owner": key_row["name"] if key_row is not None else None,
     }
     store.tasks[task_id] = task
     await store.task_queue.put(task_id)

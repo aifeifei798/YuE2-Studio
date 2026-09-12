@@ -30,6 +30,8 @@ class Settings:
         self.log_level: str = _getenv("LOG_LEVEL", "INFO").upper()
         # 管理口令：为空表示禁用 /api/admin/*（默认禁用最安全）
         self.admin_token: str = _getenv("ADMIN_TOKEN", "")
+        # 为 true 时生成接口必须带有效 API Key（防公网滥用），默认匿名可用
+        self.require_api_key: bool = _getenv("REQUIRE_API_KEY", "false").strip().lower() in ("1", "true", "yes", "on")
         raw = _getenv("CORS_ORIGINS", "http://127.0.0.1:8000,http://localhost:8000")
         self.cors_origins: list[str] = [o.strip() for o in raw.split(",") if o.strip()]
         self.allow_credentials: bool = "*" not in self.cors_origins
@@ -58,6 +60,7 @@ class Settings:
             "max_queue": self.max_queue,
             "submit_per_hour": self.submit_per_hour,
             "max_pending_per_ip": self.max_pending_per_ip,
+            "require_api_key": self.require_api_key,
             "max_style_len": self.max_style_len,
             "max_lyrics_len": self.max_lyrics_len,
             "max_title_len": self.max_title_len,

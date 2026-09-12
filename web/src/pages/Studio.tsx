@@ -1,5 +1,14 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { apiFetch, getAdminToken, isSafeAudioUrl, type HistoryRecord } from "../lib/api";
+import {
+  apiFetch,
+  clearUserCreds,
+  getAdminToken,
+  getUserCreds,
+  isSafeAudioUrl,
+  setUserCreds,
+  type HistoryRecord,
+  type QuotaInfo,
+} from "../lib/api";
 import { useModal } from "../components/Modal";
 
 const DRAFT_KEY = "yue2-draft-v1";
@@ -27,6 +36,10 @@ export default function Studio(props: { serverState: string; refreshServer: () =
   const [page, setPage] = useState(0);
   const [current, setCurrent] = useState<HistoryRecord | null>(null);
   const [logs, setLogs] = useState<string[]>(["[Ready] 系统就绪，等待指令"]);
+  const [user, setUser] = useState<QuotaInfo | null>(null);
+  const [loginName, setLoginName] = useState("");
+  const [loginKey, setLoginKey] = useState("");
+  const [mineOnly, setMineOnly] = useState(false);
   const modal = useModal();
   // 删除是管理操作：无 admin token 时不展示删除按钮
   const [isAdmin] = useState(() => getAdminToken() !== "");
@@ -41,13 +54,21 @@ export default function Studio(props: { serverState: string; refreshServer: () =
     try {
       const params = new URLSearchParams({ limit: String(PAGE_SIZE), offset: String(page * PAGE_SIZE) });
       if (query.trim()) params.set("q", query.trim());
-      const data = await apiFetch<{ total: number; items: HistoryRecord[] }>(`/api/history?${params}`);
+      // 登录后可切“只看我的”（走 key 鉴权的个人历史接口）
+      const mine = mineOnly && getUserCreds() !== null;
+      const base = mine ? "/api/auth/history" : "/api/history";
+      const data = await apiFetch<{ total: number; items: HistoryRecord[] }>(
+        `${base}?${params}`,
+        {},
+        false,
+        mine,
+      );
       setHistory(data.items || []);
       setTotal(data.total ?? (data.items || []).length);
     } catch (e) {
       pushLog(`拉取历史失败: ${(e as Error).message}`);
     }
-  }, [query, page, pushLog]);
+  }, [query, page, mineOnly, pushLog]);
 
   useEffect(() => {
     try {
@@ -76,9 +97,69 @@ export default function Studio(props: { serverState: string; refreshServer: () =
   useEffect(() => {
     const t = setTimeout(loadHistory, 300);
     return () => clearTimeout(t);
-  }, [query, page, loadHistory]);
+  }, [query, page, mineOnly, loadHistory]);
+  // 启动时用存着的凭证静默校验，失效就清掉（上一轮遗留：不要只信本地）
+  useEffect(() => {
+    if (!getUserCreds()) return;
+    apiFetch<QuotaInfo>("/api/auth/me", {}, false, true)
+      .then(setUser)
+      .catch(() => {
+        clearUserCreds();
+        setUser(null);
+      });
+  }, []);
 
   useEffect(() => () => { if (pollRef.current) window.clearInterval(pollRef.current); }, []);
+
+  async function refreshQuota() {
+    if (!getUserCreds()) return;
+    try {
+      setUser(await apiFetch<QuotaInfo>("/api/auth/me", {}, false, true));
+    } catch {
+      /* 忽略，后台轮询/下次操作会提示 */
+    }
+  }
+
+  async function login() {
+    if (!loginName.trim() || !loginKey.trim()) {
+      await modal.alert("请输入用户名和 Key（找管理员领取）。");
+      return;
+    }
+    try {
+      const data = await apiFetch<QuotaInfo & { ok: boolean }>("/api/auth/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ username: loginName.trim(), key: loginKey.trim() }),
+      });
+      setUserCreds(loginName.trim(), loginKey.trim());
+      setLoginKey("");
+      setUser(data);
+      setMineOnly(false);
+      setPage(0);
+      pushLog(`已登录：${data.name}（配额 ${data.quota_used}/${data.quota_total <= 0 ? "不限" : data.quota_total}）`);
+    } catch (e) {
+      pushLog(`登录失败: ${(e as Error).message}`);
+      await modal.alert(`登录失败：${(e as Error).message}`);
+    }
+  }
+
+  function logout() {
+    clearUserCreds();
+    setUser(null);
+    setMineOnly(false);
+    setPage(0);
+    pushLog("已退出登录");
+  }
+
+  /** 回到首页；已在首页则直接重载（setState 无变化不会触发 effect，这是之前的坑） */
+  function backToFirstPage() {
+    if (query === "" && page === 0 && !mineOnly) loadHistory();
+    else {
+      setQuery("");
+      setPage(0);
+      setMineOnly(false);
+    }
+  }
 
   function play(item: HistoryRecord) {
     if (!isSafeAudioUrl(item.audio_url)) {
@@ -129,8 +210,8 @@ export default function Studio(props: { serverState: string; refreshServer: () =
           setBusy(false);
           pushLog(`创作成功！种子: ${taskSeed}`);
           // 回到首页并重载（服务端分页下不再本地 unshift）
-          setQuery("");
-          setPage(0);
+          backToFirstPage();
+          refreshQuota();
           play(t.record);
           props.refreshServer();
         } else if (t.status === "failed") {
@@ -166,11 +247,16 @@ export default function Studio(props: { serverState: string; refreshServer: () =
     setBusyText("正在入队...");
     pushLog(`提交创作: 《${title.trim() || "未命名歌曲"}》`);
     try {
-      const data = await apiFetch<{ task_id: string; queue_position: number; seed: number }>("/api/generate", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ title: title.trim() || "未命名歌曲", style: style.trim(), lyrics: lyrics.trim(), cot, seed: seedNum }),
-      });
+      const data = await apiFetch<{ task_id: string; queue_position: number; seed: number }>(
+        "/api/generate",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ title: title.trim() || "未命名歌曲", style: style.trim(), lyrics: lyrics.trim(), cot, seed: seedNum }),
+        },
+        false,
+        true, // 登录后自动带 X-API-Key，记到个人名下并扣配额
+      );
       pushLog(`已入队 task=${data.task_id}，第 ${data.queue_position} 位`);
       pollTask(data.task_id, data.seed);
     } catch (e) {
@@ -243,6 +329,23 @@ export default function Studio(props: { serverState: string; refreshServer: () =
 
       <section className="panel">
         <h3>创作历史 ({total})</h3>
+        {user ? (
+          <div className="userstrip">
+            <span>👤 {user.name} · 配额 {user.quota_used}/{user.quota_total <= 0 ? "不限" : user.quota_total}</span>
+            <span style={{ display: "flex", gap: 6 }}>
+              <button className={`mini${mineOnly ? " active" : ""}`} onClick={() => { setMineOnly(!mineOnly); setPage(0); }}>
+                {mineOnly ? "只看我的 ✓" : "只看我的"}
+              </button>
+              <button className="mini" onClick={logout}>退出</button>
+            </span>
+          </div>
+        ) : (
+          <div className="userstrip">
+            <input className="in" style={{ width: 110 }} placeholder="用户名" value={loginName} onChange={(e) => setLoginName(e.target.value)} />
+            <input className="in" style={{ flex: 1 }} type="password" placeholder="Key（找管理员领取）" value={loginKey} onChange={(e) => setLoginKey(e.target.value)} />
+            <button className="mini" onClick={login}>登录</button>
+          </div>
+        )}
         <input className="in" placeholder="搜索歌名或 Seed..." value={query} onChange={(e) => { setQuery(e.target.value); setPage(0); }} />
         <div style={{ marginTop: 10 }}>
           {history.length === 0 && <div className="hint">无匹配的曲目</div>}

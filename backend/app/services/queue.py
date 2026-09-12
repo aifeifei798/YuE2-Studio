@@ -49,10 +49,16 @@ async def _consume_one() -> None:
         log.info("🎵 开始生成 [%s] 歌名=%s Seed=%s", task_id, task["title"], task["seed"])
         try:
             record = await asyncio.to_thread(run_generation, task)
+            task["record"] = record
+            # 归属 + 配额：只有成功生成的才计入 key 用量（失败/取消不计）
+            if task.get("owner"):
+                record["owner"] = task["owner"]
+            if task.get("key_id") is not None:
+                store.increment_used(task["key_id"])
+            store.add_history_record(record)
+            # 先落盘再标成功：轮询到 succeeded 即代表可查（否则客户端有竞态）
             task["status"] = "succeeded"
             task["finished_at"] = store.now_str()
-            task["record"] = record
-            store.add_history_record(record)
             store.save_pending_snapshot()
             log.info("✅ 生成成功 [%s]", task_id)
         except Exception as e:

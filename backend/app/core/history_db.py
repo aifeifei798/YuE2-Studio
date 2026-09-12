@@ -11,8 +11,11 @@
 from __future__ import annotations
 
 import datetime
+import hashlib
+import hmac
 import json
 import logging
+import secrets
 import shutil
 import sqlite3
 import threading
@@ -24,7 +27,9 @@ from .config import get_settings
 
 log = logging.getLogger("yue2-studio")
 
-COLUMNS = ("task_id", "title", "style", "lyrics", "seed", "cot", "audio_url", "created_at", "created_ts")
+COLUMNS = ("task_id", "title", "style", "lyrics", "seed", "cot", "audio_url", "created_at", "created_ts", "owner")
+
+_KEY_COLUMNS = ("id", "name", "key_hash", "key_prefix", "quota_total", "used_count", "enabled", "note", "created_at", "last_used_at")
 
 _SCHEMA = """CREATE TABLE IF NOT EXISTS records (
   task_id TEXT PRIMARY KEY,
@@ -35,7 +40,21 @@ _SCHEMA = """CREATE TABLE IF NOT EXISTS records (
   cot TEXT NOT NULL DEFAULT 'full',
   audio_url TEXT NOT NULL DEFAULT '',
   created_at TEXT NOT NULL DEFAULT '',
-  created_ts REAL NOT NULL DEFAULT 0
+  created_ts REAL NOT NULL DEFAULT 0,
+  owner TEXT DEFAULT NULL
+)"""
+
+_KEYS_SCHEMA = """CREATE TABLE IF NOT EXISTS api_keys (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL UNIQUE,
+  key_hash TEXT NOT NULL UNIQUE,
+  key_prefix TEXT NOT NULL DEFAULT '',
+  quota_total INTEGER NOT NULL DEFAULT 0,
+  used_count INTEGER NOT NULL DEFAULT 0,
+  enabled INTEGER NOT NULL DEFAULT 1,
+  note TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL DEFAULT '',
+  last_used_at TEXT NOT NULL DEFAULT ''
 )"""
 
 _lock = threading.Lock()
@@ -64,12 +83,21 @@ def _backup_corrupt(db: Path, reason: str) -> None:
         log.exception("备份损坏的历史库失败")
 
 
+def _now_str() -> str:
+    return datetime.datetime.now().astimezone().strftime("%Y-%m-%d %H:%M:%S")
+
+
 def _ensure_schema(db: Path) -> None:
     con = _connect(db)
     try:
         with con:
             con.execute(_SCHEMA)
+            con.execute(_KEYS_SCHEMA)
             con.execute("PRAGMA journal_mode=WAL")
+            # 存量库补列（新库 CREATE 已包含，老库 ALTER）
+            cols = {r[1] for r in con.execute("PRAGMA table_info(records)").fetchall()}
+            if "owner" not in cols:
+                con.execute("ALTER TABLE records ADD COLUMN owner TEXT DEFAULT NULL")
     finally:
         con.close()
 
@@ -121,6 +149,7 @@ def _coerce(rec: Dict[str, Any]) -> Dict[str, Any]:
         ts = datetime.datetime.strptime(str(rec.get("created_at", "")), "%Y-%m-%d %H:%M:%S").timestamp()
     except (ValueError, TypeError):
         ts = 0
+    owner = rec.get("owner")
     return {
         "task_id": str(rec.get("task_id", "")),
         "title": str(rec.get("title", "")),
@@ -131,6 +160,7 @@ def _coerce(rec: Dict[str, Any]) -> Dict[str, Any]:
         "audio_url": str(rec.get("audio_url", "")),
         "created_at": str(rec.get("created_at", "")),
         "created_ts": ts,
+        "owner": str(owner) if owner else None,
     }
 
 
@@ -146,12 +176,12 @@ def add_history_record(record: Dict[str, Any], path: Optional[Path] = None) -> N
         rec["created_ts"] = time.time()
     with _lock, _connect(path) as con:
         con.execute(
-            """INSERT INTO records (task_id,title,style,lyrics,seed,cot,audio_url,created_at,created_ts)
-               VALUES (:task_id,:title,:style,:lyrics,:seed,:cot,:audio_url,:created_at,:created_ts)
+            """INSERT INTO records (task_id,title,style,lyrics,seed,cot,audio_url,created_at,created_ts,owner)
+               VALUES (:task_id,:title,:style,:lyrics,:seed,:cot,:audio_url,:created_at,:created_ts,:owner)
                ON CONFLICT(task_id) DO UPDATE SET
                  title=excluded.title, style=excluded.style, lyrics=excluded.lyrics,
                  seed=excluded.seed, cot=excluded.cot, audio_url=excluded.audio_url,
-                 created_at=excluded.created_at, created_ts=excluded.created_ts""",
+                 created_at=excluded.created_at, created_ts=excluded.created_ts, owner=excluded.owner""",
             rec,
         )
         con.commit()
@@ -174,6 +204,13 @@ def clear_all(path: Optional[Path] = None) -> None:
         con.commit()
 
 
+def clear_keys(path: Optional[Path] = None) -> None:
+    """清空 Key 表（仅测试隔离用）。"""
+    with _lock, _connect(path) as con:
+        con.execute("DELETE FROM api_keys")
+        con.commit()
+
+
 def get_history_record(task_id: str, path: Optional[Path] = None) -> Optional[Dict[str, Any]]:
     with _connect(path) as con:
         row = con.execute("SELECT * FROM records WHERE task_id=?", (task_id,)).fetchone()
@@ -193,21 +230,139 @@ def _escape_like(s: str) -> str:
 
 
 def query_history(
-    keyword: str = "", limit: int = 200, offset: int = 0, path: Optional[Path] = None
+    keyword: str = "",
+    limit: int = 200,
+    offset: int = 0,
+    path: Optional[Path] = None,
+    owner: Optional[str] = None,
 ) -> Tuple[int, List[Dict[str, Any]]]:
-    """返回 (总数, 当页记录 newest-first)。搜索匹配标题或 seed。"""
+    """返回 (总数, 当页记录 newest-first)。搜索匹配标题或 seed；owner 只看某人的歌。"""
     kw = keyword.strip()
+    conds: List[str] = []
+    args: List[Any] = []
+    if owner is not None:
+        conds.append("owner IS ?")
+        args.append(owner)
+    if kw:
+        like = f"%{_escape_like(kw)}%"
+        # SQLite 默认 LIKE 对 ASCII 大小写不敏感；中文不受影响
+        conds.append("(title LIKE ? ESCAPE '\\' OR CAST(seed AS TEXT) LIKE ? ESCAPE '\\')")
+        args.extend([like, like])
+    where = f"WHERE {' AND '.join(conds)}" if conds else ""
     with _connect(path) as con:
-        if kw:
-            like = f"%{_escape_like(kw)}%"
-            # SQLite 默认 LIKE 对 ASCII 大小写不敏感；中文不受影响
-            where = "WHERE title LIKE ? ESCAPE '\\' OR CAST(seed AS TEXT) LIKE ? ESCAPE '\\'"
-            args: tuple = (like, like)
-        else:
-            where, args = "", ()
         total = int(con.execute(f"SELECT COUNT(*) FROM records {where}", args).fetchone()[0])
         rows = con.execute(
             f"SELECT * FROM records {where} ORDER BY rowid DESC LIMIT ? OFFSET ?",
             (*args, limit, offset),
         ).fetchall()
         return total, [_row_to_dict(r) for r in rows]
+
+
+# ----------------- API Key：库里只存哈希，明文只在创建时返回一次 -----------------
+
+def _hash_key(secret: str) -> str:
+    return hashlib.sha256(secret.encode("utf-8")).hexdigest()
+
+
+def _key_to_dict(row: sqlite3.Row) -> Dict[str, Any]:
+    return {c: row[c] for c in _KEY_COLUMNS if c != "key_hash"}
+
+
+def create_api_key(
+    name: str, quota_total: int = 0, note: str = "", path: Optional[Path] = None
+) -> Tuple[Dict[str, Any], str]:
+    """创建 key。返回 (公开信息, 明文secret)。重名抛 ValueError。"""
+    secret = "sk-" + secrets.token_hex(16)
+    rec = {
+        "name": name,
+        "key_hash": _hash_key(secret),
+        "key_prefix": secret[:10],
+        "quota_total": max(0, quota_total),
+        "note": note,
+        "created_at": _now_str(),
+    }
+    with _lock, _connect(path) as con:
+        try:
+            cur = con.execute(
+                """INSERT INTO api_keys (name,key_hash,key_prefix,quota_total,note,created_at)
+                   VALUES (:name,:key_hash,:key_prefix,:quota_total,:note,:created_at)""",
+                rec,
+            )
+            con.commit()
+        except sqlite3.IntegrityError:
+            raise ValueError("用户名已存在")
+        row = con.execute("SELECT * FROM api_keys WHERE id=?", (cur.lastrowid,)).fetchone()
+        return _key_to_dict(row), secret
+
+
+def verify_api_key(name: str, secret: str, path: Optional[Path] = None) -> Optional[Dict[str, Any]]:
+    """校验用户名+key。返回行（含内部字段供调用方判断 enabled/配额），失败返回 None。"""
+    with _connect(path) as con:
+        row = con.execute("SELECT * FROM api_keys WHERE name=?", (name,)).fetchone()
+        if row is None:
+            return None
+        if not hmac.compare_digest(row["key_hash"], _hash_key(secret)):
+            return None
+        return dict(row)
+
+
+def list_keys(path: Optional[Path] = None) -> List[Dict[str, Any]]:
+    with _connect(path) as con:
+        rows = con.execute("SELECT * FROM api_keys ORDER BY id ASC").fetchall()
+        return [_key_to_dict(r) for r in rows]
+
+
+def update_key(
+    key_id: int,
+    quota_total: Optional[int] = None,
+    enabled: Optional[bool] = None,
+    note: Optional[str] = None,
+    path: Optional[Path] = None,
+) -> Optional[Dict[str, Any]]:
+    sets: List[str] = []
+    args: Dict[str, Any] = {"id": key_id}
+    if quota_total is not None:
+        sets.append("quota_total=:quota_total")
+        args["quota_total"] = max(0, quota_total)
+    if enabled is not None:
+        sets.append("enabled=:enabled")
+        args["enabled"] = 1 if enabled else 0
+    if note is not None:
+        sets.append("note=:note")
+        args["note"] = note
+    if not sets:
+        return get_key(key_id, path)
+    with _lock, _connect(path) as con:
+        con.execute(f"UPDATE api_keys SET {', '.join(sets)} WHERE id=:id", args)
+        con.commit()
+        row = con.execute("SELECT * FROM api_keys WHERE id=?", (key_id,)).fetchone()
+        return _key_to_dict(row) if row is not None else None
+
+
+def get_key(key_id: int, path: Optional[Path] = None) -> Optional[Dict[str, Any]]:
+    with _connect(path) as con:
+        row = con.execute("SELECT * FROM api_keys WHERE id=?", (key_id,)).fetchone()
+        return _key_to_dict(row) if row is not None else None
+
+
+def get_key_by_name(name: str, path: Optional[Path] = None) -> Optional[Dict[str, Any]]:
+    with _connect(path) as con:
+        row = con.execute("SELECT * FROM api_keys WHERE name=?", (name,)).fetchone()
+        return _key_to_dict(row) if row is not None else None
+
+
+def delete_key(key_id: int, path: Optional[Path] = None) -> bool:
+    with _lock, _connect(path) as con:
+        cur = con.execute("DELETE FROM api_keys WHERE id=?", (key_id,))
+        con.commit()
+        return cur.rowcount > 0
+
+
+def increment_used(key_id: int, path: Optional[Path] = None) -> None:
+    """成功生成一首后计数（失败/取消不计）。"""
+    with _lock, _connect(path) as con:
+        con.execute(
+            "UPDATE api_keys SET used_count=used_count+1, last_used_at=? WHERE id=?",
+            (_now_str(), key_id),
+        )
+        con.commit()

@@ -22,11 +22,20 @@ from .config import get_settings
 from .history_db import (
     add_history_record,
     count_history,
+    create_api_key,
+    delete_key,
     get_history_record,
+    get_key,
+    get_key_by_name,
+    clear_keys,
+    increment_used,
     init_db,
+    list_keys,
     migrate_from_json,
     query_history,
     remove_history_record,
+    update_key,
+    verify_api_key,
 )
 
 __all__ = [
@@ -47,6 +56,7 @@ __all__ = [
     "submit_hits",
     "check_submit_rate",
     "count_active_by_ip",
+    "count_active_by_key",
     "now_str",
     "add_history_record",
     "remove_history_record",
@@ -55,6 +65,15 @@ __all__ = [
     "query_history",
     "init_db",
     "migrate_from_json",
+    "create_api_key",
+    "verify_api_key",
+    "list_keys",
+    "get_key",
+    "get_key_by_name",
+    "clear_keys",
+    "update_key",
+    "delete_key",
+    "increment_used",
     "save_pending_snapshot",
     "load_pending_snapshot",
     "cleanup_tmp_files",
@@ -129,6 +148,15 @@ def count_active_by_ip(ip: str) -> int:
     )
 
 
+def count_active_by_key(key_id: int) -> int:
+    """该 Key 当前并存任务数（pending + running）。"""
+    return sum(
+        1
+        for t in tasks.values()
+        if t.get("key_id") == key_id and t.get("status") in ("pending", "running")
+    )
+
+
 class RingBufferHandler(logging.Handler):
     def emit(self, record: logging.LogRecord) -> None:
         try:
@@ -146,7 +174,7 @@ def _pending_file() -> Path:
 
 
 # ----------------- 排队快照：重启不丢 pending 任务 -----------------
-_PENDING_FIELDS = ("task_id", "title", "style", "lyrics", "cot", "seed", "created_at", "client")
+_PENDING_FIELDS = ("task_id", "title", "style", "lyrics", "cot", "seed", "created_at", "client", "key_id", "owner")
 
 
 def save_pending_snapshot() -> None:

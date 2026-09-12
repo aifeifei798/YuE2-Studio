@@ -21,6 +21,7 @@ from .core.store import (
     tasks,
 )
 from .routers import admin as admin_router
+from .routers import auth as auth_router
 from .routers import public as public_router
 from .services.inference import load_model_blocking
 from .services.queue import worker_loop
@@ -86,6 +87,7 @@ def create_app() -> FastAPI:
         allow_headers=["Content-Type", "Authorization", "X-Admin-Token"],
     )
     app.include_router(public_router.router)
+    app.include_router(auth_router.router)
     app.include_router(admin_router.router)
 
     # 音频只暴露子目录

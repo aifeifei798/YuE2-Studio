@@ -69,6 +69,17 @@ def client():
 
 
 def _reset_state():
+    import time
+
+    # 先排空在途任务：上个用例提交了但没等完成的任务会在后台落库，
+    # 不等它做完就清库会漏到下个用例（表现为 total 莫名多 1）
+    deadline = time.time() + 15
+    while time.time() < deadline:
+        if store.task_queue.qsize() == 0 and not any(
+            t.get("status") in ("pending", "running") for t in store.tasks.values()
+        ):
+            break
+        time.sleep(0.05)
     store.tasks.clear()
     while True:
         try:
@@ -88,6 +99,7 @@ def _reset_state():
 
     try:
         history_db.clear_all()
+        history_db.clear_keys()
     except Exception:
         pass
     reload_settings()

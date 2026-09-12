@@ -11,7 +11,7 @@ from ..core import store
 from ..core.config import get_settings
 from ..core.security import require_admin
 from ..core.store import TASK_ID_RE, dir_size, log_buffer, queue_snapshot
-from ..models.schemas import AdminConfigUpdate
+from ..models.schemas import AdminConfigUpdate, KeyCreate, KeyUpdate
 from ..services.inference import safe_delete_task_files
 from .public import public_task_view
 
@@ -133,6 +133,9 @@ def admin_update_config(payload: AdminConfigUpdate):
     if payload.max_pending_per_ip is not None:
         s.max_pending_per_ip = payload.max_pending_per_ip
         updated["max_pending_per_ip"] = s.max_pending_per_ip
+    if payload.require_api_key is not None:
+        s.require_api_key = payload.require_api_key
+        updated["require_api_key"] = s.require_api_key
     if payload.log_level:
         level = payload.log_level.upper()
         logging.getLogger().setLevel(getattr(logging, level, logging.INFO))
@@ -141,3 +144,54 @@ def admin_update_config(payload: AdminConfigUpdate):
         updated["log_level"] = level
     log.info("⚙️ 管理员更新配置 %s", updated)
     return {"updated": updated, "config": s.public_config()}
+
+
+# ----------------- API Key 管理 -----------------
+
+@router.get("/keys")
+def admin_list_keys():
+    return {"total": len(store.list_keys()), "items": store.list_keys()}
+
+
+@router.post("/keys", status_code=201)
+def admin_create_key(payload: KeyCreate):
+    name = payload.name.strip()
+    if not name:
+        raise HTTPException(status_code=422, detail="用户名不能为空")
+    try:
+        row, secret = store.create_api_key(name, payload.quota_total, payload.note.strip())
+    except ValueError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    log.info("🔑 管理员创建 Key [%s] 配额=%s", name, payload.quota_total)
+    # 明文只返回这一次，前端需提示管理员立即复制
+    return {**row, "api_key": secret}
+
+
+@router.patch("/keys/{key_id}")
+def admin_update_key(key_id: int, payload: KeyUpdate):
+    row = store.update_key(key_id, payload.quota_total, payload.enabled, payload.note)
+    if row is None:
+        raise HTTPException(status_code=404, detail="Key 不存在")
+    log.info("🔑 管理员更新 Key[id=%d] %s", key_id, payload.model_dump(exclude_none=True))
+    return row
+
+
+@router.delete("/keys/{key_id}")
+def admin_delete_key(key_id: int):
+    if not store.delete_key(key_id):
+        raise HTTPException(status_code=404, detail="Key 不存在")
+    log.info("🔑 管理员删除 Key[id=%d]（其历史歌曲保留，归属名不变）", key_id)
+    return {"status": "deleted", "id": key_id}
+
+
+@router.get("/keys/{key_id}/history")
+def admin_key_history(
+    key_id: int,
+    limit: int = Query(default=20, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
+):
+    row = store.get_key(key_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="Key 不存在")
+    total, items = store.query_history("", limit, offset, owner=row["name"])
+    return {"name": row["name"], "total": total, "offset": offset, "limit": limit, "items": items}

@@ -29,4 +29,22 @@ class AdminConfigUpdate(BaseModel):
     max_queue: Optional[int] = Field(default=None, ge=1, le=100)
     submit_per_hour: Optional[int] = Field(default=None, ge=0, le=10000)
     max_pending_per_ip: Optional[int] = Field(default=None, ge=0, le=100)
+    require_api_key: Optional[bool] = None
     log_level: Optional[str] = Field(default=None, max_length=10)
+
+
+class KeyCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=32)
+    quota_total: int = Field(default=0, ge=0, le=100000)
+    note: str = Field(default="", max_length=200)
+
+
+class KeyUpdate(BaseModel):
+    quota_total: Optional[int] = Field(default=None, ge=0, le=100000)
+    enabled: Optional[bool] = None
+    note: Optional[str] = Field(default=None, max_length=200)
+
+
+class KeyLogin(BaseModel):
+    username: str = Field(min_length=1, max_length=32)
+    key: str = Field(min_length=1, max_length=100)
