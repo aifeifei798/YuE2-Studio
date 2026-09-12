@@ -103,12 +103,8 @@ a { color: #c4b5fd; }
   }
   .layout.cols3 > section { min-height: 0; min-width: 0; }
   .layout.cols3 > section.panel { overflow-y: auto; }
-  /* 左栏提交条吸底：表单再长，生成按钮永远可见 */
-  .submit-bar {
-    position: sticky; bottom: 0;
-    margin: 12px -16px -16px; padding: 12px 16px 14px;
-    background: linear-gradient(to bottom, transparent, rgba(13,17,30,.94) 30%);
-  }
+  /* 提交条：紧贴歌词框下的普通流 */
+  .submit-bar { margin-top: 10px; }
   .studio-center { height: 100%; max-height: 100%; overflow: hidden; }
   .studio-center .hero { flex-shrink: 0; }
   .studio-center .center-panel { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; }
@@ -240,6 +236,8 @@ select.in option { background: #0f172a; }
 @keyframes slide { 0% { margin-left: -40%; } 100% { margin-left: 100%; } }
 
 .logbox { background: rgba(2,6,23,.9); border: 1px solid #1e293b; border-radius: 12px; padding: 8px 10px; height: 120px; overflow-y: auto; font-family: ui-monospace, monospace; font-size: 11px; line-height: 1.7; }
+/* 日志独占中央面板时撑满到底 */
+.center-panel .logbox.grow { flex: 1; height: auto; min-height: 260px; }
 .logbox div:first-child { color: #6ee7b7; }
 .kv { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; font-size: 12px; font-family: ui-monospace, monospace; background: rgba(2,6,23,.7); border: 1px solid #1e293b; padding: 10px; border-radius: 12px; }
 .pre { white-space: pre-wrap; font-size: 12px; background: rgba(2,6,23,.6); border: 1px solid #1e293b; padding: 10px; border-radius: 12px; max-height: 160px; overflow-y: auto; line-height: 1.7; word-break: break-word; }

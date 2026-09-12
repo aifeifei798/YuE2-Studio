@@ -4,7 +4,6 @@ import {
   Dices,
   Disc3,
   Download,
-  FileText,
   History,
   ListMusic,
   LogOut,
@@ -71,7 +70,7 @@ export default function Studio(props: { serverState: string; refreshServer: () =
   const [page, setPage] = useState(0);
   const [current, setCurrent] = useState<HistoryRecord | null>(null);
   const [playing, setPlaying] = useState(false);
-  const [centerTab, setCenterTab] = useState<"profile" | "lyrics" | "logs">("profile");
+  const [centerTab, setCenterTab] = useState<"profile" | "logs">("profile");
   const [logs, setLogs] = useState<string[]>(["[Ready] 系统就绪，等待指令"]);
   const [user, setUser] = useState<QuotaInfo | null>(null);
   const [loginName, setLoginName] = useState("");
@@ -529,9 +528,8 @@ export default function Studio(props: { serverState: string; refreshServer: () =
 
         <div className="panel center-panel">
           <div className="subtabs">
-            <button className={centerTab === "profile" ? "on" : ""} onClick={() => setCenterTab("profile")}><Disc3 size={12} style={{ verticalAlign: -2 }} /> 制作档案</button>
-            <button className={centerTab === "lyrics" ? "on" : ""} onClick={() => setCenterTab("lyrics")}><FileText size={12} style={{ verticalAlign: -2 }} /> 歌词</button>
-            <button className={centerTab === "logs" ? "on" : ""} onClick={() => setCenterTab("logs")}><Terminal size={12} style={{ verticalAlign: -2 }} /> 日志</button>
+            <button className={centerTab === "profile" ? "on" : ""} onClick={() => setCenterTab("profile")}><Disc3 size={12} /> 制作档案</button>
+            <button className={centerTab === "logs" ? "on" : ""} onClick={() => setCenterTab("logs")}><Terminal size={12} /> 日志</button>
           </div>
           {centerTab === "profile" && (
             current ? (
@@ -545,15 +543,13 @@ export default function Studio(props: { serverState: string; refreshServer: () =
                 </div>
                 <div className="hint">风格</div>
                 <div className="pre">{current.style}</div>
+                <div className="hint">歌词</div>
+                <div className="pre" style={{ maxHeight: 260 }}>{current.lyrics}</div>
               </>
             ) : (<EmptyState emoji="💿" title="还没有选中曲目" sub="右侧历史里点一首，档案会出现在这里" />)
           )}
-          {centerTab === "lyrics" && (
-            current ? <div className="pre" style={{ maxHeight: 260 }}>{current.lyrics}</div>
-              : (<EmptyState emoji="📝" title="还没有选中曲目" />)
-          )}
           {centerTab === "logs" && (
-            <div className="logbox" style={{ height: 180 }}>{logs.map((l, i) => <div key={i}>{l}</div>)}</div>
+            <div className="logbox grow">{logs.map((l, i) => <div key={i}>{l}</div>)}</div>
           )}
         </div>
       </section>
