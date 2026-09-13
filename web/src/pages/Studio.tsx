@@ -59,8 +59,7 @@ export default function Studio(props: { serverState: string; refreshServer: () =
   const [title, setTitle] = useState("");
   const [style, setStyle] = useState("");
   const [lyrics, setLyrics] = useState("");
-  // 默认即随机：首屏直接填入一个随机种子（清空则由服务端随机）
-  const [seed, setSeed] = useState(() => String(Math.floor(Math.random() * 2147483647)));
+  const [seed, setSeed] = useState("");
   const [cot, setCot] = useState("full");
   const [busy, setBusy] = useState(false);
   const [busyText, setBusyText] = useState("");
@@ -141,7 +140,7 @@ export default function Studio(props: { serverState: string; refreshServer: () =
         if (d.style) setStyle(d.style);
         if (d.lyrics) setLyrics(d.lyrics);
         if (d.cot) setCot(d.cot);
-        if (d.seed !== undefined && String(d.seed ?? "").trim() !== "") setSeed(String(d.seed));
+        if (d.seed !== undefined) setSeed(String(d.seed ?? ""));
       }
     } catch { /* ignore */ }
     // 历史由下面的 debounce effect 加载，这里只恢复草稿，避免首屏 double-fetch
@@ -454,7 +453,7 @@ export default function Studio(props: { serverState: string; refreshServer: () =
               <div>
                 <label className="lbl" htmlFor="f-seed"><span>随机种子</span></label>
                 <div style={{ display: "flex", gap: 6 }}>
-                  <input id="f-seed" className="in" type="number" min={0} max={2147483647} placeholder="已自动随机" value={seed} onChange={(e) => setSeed(e.target.value)} style={{ fontFamily: "monospace" }} />
+                  <input id="f-seed" className="in" type="number" min={0} max={2147483647} placeholder="留空随机" value={seed} onChange={(e) => setSeed(e.target.value)} style={{ fontFamily: "monospace" }} />
                   <button className="icon-btn" title="随机一个种子" onClick={randomSeed} style={{ width: 36, height: 36, borderColor: "rgba(255,255,255,0.08)", background: "#0d1019" }}><Dices size={15} /></button>
                 </div>
               </div>
@@ -466,7 +465,7 @@ export default function Studio(props: { serverState: string; refreshServer: () =
                 </div>
               </div>
             </div>
-            <div className="hint">默认已填入随机种子（可清空由服务端随机）；相同 Seed + 相同词曲可复现结果。</div>
+            <div className="hint">相同 Seed + 相同词曲可复现结果；Full 质量更高，None 速度更快。</div>
           </div>
         </details>
 
