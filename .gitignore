@@ -4,6 +4,7 @@ __pycache__/
 venv/
 .env
 outputs/
+.server.*
 web/node_modules/
 web/dist/
 *.log

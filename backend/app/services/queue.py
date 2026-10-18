@@ -10,25 +10,42 @@ from .inference import cleanup_task_files, run_generation
 log = logging.getLogger("yue2-studio")
 
 
-async def worker_loop() -> None:
-    log.info("GPU worker 启动，串行消费队列")
-    store.beat()
+async def _heartbeat() -> None:
+    """后台心跳：避免空闲/长生成期间 worker_alive 误报 false。"""
     while True:
+        store.beat()
         try:
-            await _consume_one()
+            await asyncio.sleep(10)
         except asyncio.CancelledError:
             raise
-        except Exception:
-            # 看门狗：任何意外异常都不能带走 worker，否则队列静默卡死；
-            # 退避 1s，避免瞬间失败时空转打爆 CPU/日志
-            log.exception("worker 迭代异常，已捕获并继续")
+
+
+async def worker_loop() -> None:
+    log.info("GPU worker 启动，串行消费队列")
+    hb = asyncio.create_task(_heartbeat())
+    try:
+        while True:
             try:
-                await asyncio.sleep(1)
+                await _consume_one()
             except asyncio.CancelledError:
                 raise
-        finally:
-            store.beat()
-            store.save_pending_snapshot()
+            except Exception:
+                # 看门狗：任何意外异常都不能带走 worker，否则队列静默卡死；
+                # 退避 1s，避免瞬间失败时空转打爆 CPU/日志
+                log.exception("worker 迭代异常，已捕获并继续")
+                try:
+                    await asyncio.sleep(1)
+                except asyncio.CancelledError:
+                    raise
+            finally:
+                store.beat()
+                store.save_pending_snapshot()
+    finally:
+        hb.cancel()
+        try:
+            await hb
+        except (asyncio.CancelledError, Exception):
+            pass
 
 
 async def _consume_one() -> None:
